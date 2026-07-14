@@ -15,8 +15,7 @@
 #include "display_ordered_opcodes.h"
 /****************************************/
 //Config
-#define contador_win 4      // ahora solo 4 pulsaciones para ganar (patron 0001->0010->0100->1000)
-#define antirrebote_ms 25
+#define contador_win 4      // solo 4 pulsaciones para ganar (patron 0001->0010->0100->1000)
 /****************************************/
 // Function protoypes
 void init_ports(void);
