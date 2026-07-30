@@ -3,29 +3,29 @@ Lab3_dig2.elf:     file format elf32-avr
 
 Sections:
 Idx Name          Size      VMA       LMA       File off  Algn
-  0 .data         00000016  00800100  00000194  00000208  2**0
+  0 .data         00000016  00800100  000001d2  00000246  2**0
                   CONTENTS, ALLOC, LOAD, DATA
-  1 .text         00000194  00000000  00000000  00000074  2**1
+  1 .text         000001d2  00000000  00000000  00000074  2**1
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
-  2 .comment      00000030  00000000  00000000  0000021e  2**0
+  2 .comment      00000030  00000000  00000000  0000025c  2**0
                   CONTENTS, READONLY
-  3 .note.gnu.avr.deviceinfo 00000040  00000000  00000000  00000250  2**2
+  3 .note.gnu.avr.deviceinfo 00000040  00000000  00000000  0000028c  2**2
                   CONTENTS, READONLY
-  4 .debug_aranges 00000080  00000000  00000000  00000290  2**0
+  4 .debug_aranges 00000088  00000000  00000000  000002cc  2**0
                   CONTENTS, READONLY, DEBUGGING
-  5 .debug_info   00000ba2  00000000  00000000  00000310  2**0
+  5 .debug_info   00000c2d  00000000  00000000  00000354  2**0
                   CONTENTS, READONLY, DEBUGGING
-  6 .debug_abbrev 00000815  00000000  00000000  00000eb2  2**0
+  6 .debug_abbrev 0000084d  00000000  00000000  00000f81  2**0
                   CONTENTS, READONLY, DEBUGGING
-  7 .debug_line   0000049f  00000000  00000000  000016c7  2**0
+  7 .debug_line   000004ce  00000000  00000000  000017ce  2**0
                   CONTENTS, READONLY, DEBUGGING
-  8 .debug_frame  000000ac  00000000  00000000  00001b68  2**2
+  8 .debug_frame  000000bc  00000000  00000000  00001c9c  2**2
                   CONTENTS, READONLY, DEBUGGING
-  9 .debug_str    0000056c  00000000  00000000  00001c14  2**0
+  9 .debug_str    000005d8  00000000  00000000  00001d58  2**0
                   CONTENTS, READONLY, DEBUGGING
- 10 .debug_loc    000000fe  00000000  00000000  00002180  2**0
+ 10 .debug_loc    0000016b  00000000  00000000  00002330  2**0
                   CONTENTS, READONLY, DEBUGGING
- 11 .debug_ranges 00000050  00000000  00000000  0000227e  2**0
+ 11 .debug_ranges 00000058  00000000  00000000  0000249b  2**0
                   CONTENTS, READONLY, DEBUGGING
 
 Disassembly of section .text:
@@ -70,7 +70,7 @@ Disassembly of section .text:
   74:	11 e0       	ldi	r17, 0x01	; 1
   76:	a0 e0       	ldi	r26, 0x00	; 0
   78:	b1 e0       	ldi	r27, 0x01	; 1
-  7a:	e4 e9       	ldi	r30, 0x94	; 148
+  7a:	e2 ed       	ldi	r30, 0xD2	; 210
   7c:	f1 e0       	ldi	r31, 0x01	; 1
   7e:	02 c0       	rjmp	.+4      	; 0x84 <__do_copy_data+0x10>
   80:	05 90       	lpm	r0, Z+
@@ -78,214 +78,215 @@ Disassembly of section .text:
   84:	a6 31       	cpi	r26, 0x16	; 22
   86:	b1 07       	cpc	r27, r17
   88:	d9 f7       	brne	.-10     	; 0x80 <__do_copy_data+0xc>
-  8a:	0e 94 67 00 	call	0xce	; 0xce <main>
-  8e:	0c 94 c8 00 	jmp	0x190	; 0x190 <_exit>
+  8a:	0e 94 69 00 	call	0xd2	; 0xd2 <main>
+  8e:	0c 94 e7 00 	jmp	0x1ce	; 0x1ce <_exit>
 
 00000092 <__bad_interrupt>:
   92:	0c 94 00 00 	jmp	0	; 0x0 <__vectors>
 
 00000096 <ADC_Init>:
-
-/****************************************/
-// NON-Interrupt subroutines
-void ADC_Init(void)
-{
-    ADMUX = (1 << REFS0); // Resultado justificado a la derecha ADLAR = 0
   96:	80 e4       	ldi	r24, 0x40	; 64
   98:	80 93 7c 00 	sts	0x007C, r24	; 0x80007c <__TEXT_REGION_LENGTH__+0x7f807c>
-
-    ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0); // Habilita el ADC y fija el prescaler en 128 (bits ADPS2:0 = 111) 
   9c:	87 e8       	ldi	r24, 0x87	; 135
   9e:	80 93 7a 00 	sts	0x007A, r24	; 0x80007a <__TEXT_REGION_LENGTH__+0x7f807a>
   a2:	08 95       	ret
 
 000000a4 <ADC_Read>:
-}
-
-uint16_t ADC_Read(uint8_t channel)
-{
-    //Masking para el canal (solo 8)
-    channel &= 0x07;
   a4:	87 70       	andi	r24, 0x07	; 7
-	
-    ADMUX = (ADMUX & 0xF0) | channel; // Selecciona el canal
   a6:	ec e7       	ldi	r30, 0x7C	; 124
   a8:	f0 e0       	ldi	r31, 0x00	; 0
   aa:	90 81       	ld	r25, Z
   ac:	90 7f       	andi	r25, 0xF0	; 240
   ae:	89 2b       	or	r24, r25
   b0:	80 83       	st	Z, r24
-    ADCSRA |= (1 << ADSC);
   b2:	ea e7       	ldi	r30, 0x7A	; 122
   b4:	f0 e0       	ldi	r31, 0x00	; 0
   b6:	80 81       	ld	r24, Z
   b8:	80 64       	ori	r24, 0x40	; 64
   ba:	80 83       	st	Z, r24
-
-    // Espera a que termine (ADSC vuelve a 0 automaticamente) 
-    while (ADCSRA & (1 << ADSC));
   bc:	80 91 7a 00 	lds	r24, 0x007A	; 0x80007a <__TEXT_REGION_LENGTH__+0x7f807a>
   c0:	86 fd       	sbrc	r24, 6
   c2:	fc cf       	rjmp	.-8      	; 0xbc <ADC_Read+0x18>
-
-    /* Aquí ADC ya contiene el resultado de 10 bits (ADCL primero,
-     * ADCH despues, por eso se lee en este orden) */
-	
-    return ADC;
   c4:	80 91 78 00 	lds	r24, 0x0078	; 0x800078 <__TEXT_REGION_LENGTH__+0x7f8078>
   c8:	90 91 79 00 	lds	r25, 0x0079	; 0x800079 <__TEXT_REGION_LENGTH__+0x7f8079>
-	
   cc:	08 95       	ret
 
-000000ce <main>:
+000000ce <Leds_SlaveWrite>:
+/****************************************/
+// NON-Interrupt subroutines
+
+void Leds_SlaveWrite(uint8_t value)
+{
+    PORTD = value;
+  ce:	8b b9       	out	0x0b, r24	; 11
+  d0:	08 95       	ret
+
+000000d2 <main>:
+/****************************************/
+// Main Function
+
+int main(void)
+{
+    DDRD = 0xFF;
+  d2:	8f ef       	ldi	r24, 0xFF	; 255
+  d4:	8a b9       	out	0x0a, r24	; 10
         .data_order = SPI_DATA_ORDER_MSB_FIRST,
         .clock_mode = SPI_MODE0,
-        .clock_div  = SPI_CLOCK_DIV16      // Se ignora en modo esclavo
+        .clock_div = SPI_CLOCK_DIV16
     };
 
     SPI_Init(spiCfg);
-  ce:	61 e0       	ldi	r22, 0x01	; 1
-  d0:	70 e0       	ldi	r23, 0x00	; 0
-  d2:	80 e0       	ldi	r24, 0x00	; 0
-  d4:	93 e0       	ldi	r25, 0x03	; 3
-  d6:	0e 94 8a 00 	call	0x114	; 0x114 <SPI_Init>
+  d6:	61 e0       	ldi	r22, 0x01	; 1
+  d8:	70 e0       	ldi	r23, 0x00	; 0
+  da:	80 e0       	ldi	r24, 0x00	; 0
+  dc:	93 e0       	ldi	r25, 0x03	; 3
+  de:	0e 94 a9 00 	call	0x152	; 0x152 <SPI_Init>
 
-    /* -------- Configuración ADC -------- */
     ADC_Init();
-  da:	0e 94 4b 00 	call	0x96	; 0x96 <ADC_Init>
-    uint8_t pot1, pot2;
+  e2:	0e 94 4b 00 	call	0x96	; 0x96 <ADC_Init>
+    uint8_t cmd;
+    uint8_t ledValue;
+
+    /* Se mantienen actualizadas las lecturas para responder
+     * inmediatamente cuando el maestro las solicite. */
+    uint8_t pot1 = (uint8_t)(ADC_Read(0) >> 2);
+  e6:	80 e0       	ldi	r24, 0x00	; 0
+  e8:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
+  ec:	96 95       	lsr	r25
+  ee:	87 95       	ror	r24
+  f0:	96 95       	lsr	r25
+  f2:	87 95       	ror	r24
+  f4:	d8 2f       	mov	r29, r24
+    uint8_t pot2 = (uint8_t)(ADC_Read(1) >> 2);
+  f6:	81 e0       	ldi	r24, 0x01	; 1
+  f8:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
+  fc:	96 95       	lsr	r25
+  fe:	87 95       	ror	r24
+ 100:	96 95       	lsr	r25
+ 102:	87 95       	ror	r24
+ 104:	c8 2f       	mov	r28, r24
 
     while (1)
     {
-        /* Lectura de ambos potenciómetros (10 bits -> 8 bits) */
-        pot1 = (uint8_t)(ADC_Read(0) >> 2);
-  de:	80 e0       	ldi	r24, 0x00	; 0
-  e0:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
-  e4:	8c 01       	movw	r16, r24
-  e6:	16 95       	lsr	r17
-  e8:	07 95       	ror	r16
-  ea:	16 95       	lsr	r17
-  ec:	07 95       	ror	r16
-        pot2 = (uint8_t)(ADC_Read(1) >> 2);
-  ee:	81 e0       	ldi	r24, 0x01	; 1
-  f0:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
-  f4:	ec 01       	movw	r28, r24
-  f6:	d6 95       	lsr	r29
-  f8:	c7 95       	ror	r28
-  fa:	d6 95       	lsr	r29
-  fc:	c7 95       	ror	r28
+        cmd = SPI_SlaveReceive();
+ 106:	0e 94 e0 00 	call	0x1c0	; 0x1c0 <SPI_SlaveReceive>
 
-        /* Cargar primer dato para el maestro */
-        SPI_SlaveLoadData(pot1);
-  fe:	80 2f       	mov	r24, r16
- 100:	0e 94 c6 00 	call	0x18c	; 0x18c <SPI_SlaveLoadData>
+        if (cmd == CMD_READ_ADC)
+ 10a:	81 30       	cpi	r24, 0x01	; 1
+ 10c:	d9 f4       	brne	.+54     	; 0x144 <main+0x72>
+        {
+            /* Envia las lecturas disponibles */
+            SPI_SlaveLoadData(pot1);
+ 10e:	8d 2f       	mov	r24, r29
+ 110:	0e 94 e5 00 	call	0x1ca	; 0x1ca <SPI_SlaveLoadData>
+            SPI_SlaveReceive();
+ 114:	0e 94 e0 00 	call	0x1c0	; 0x1c0 <SPI_SlaveReceive>
 
-        /* Esperar a que el maestro lea el primer byte */
-        SPI_SlaveReceive();
- 104:	0e 94 c1 00 	call	0x182	; 0x182 <SPI_SlaveReceive>
+            SPI_SlaveLoadData(pot2);
+ 118:	8c 2f       	mov	r24, r28
+ 11a:	0e 94 e5 00 	call	0x1ca	; 0x1ca <SPI_SlaveLoadData>
+            SPI_SlaveReceive();
+ 11e:	0e 94 e0 00 	call	0x1c0	; 0x1c0 <SPI_SlaveReceive>
 
-        /* Cargar segundo dato */
-        SPI_SlaveLoadData(pot2);
- 108:	8c 2f       	mov	r24, r28
- 10a:	0e 94 c6 00 	call	0x18c	; 0x18c <SPI_SlaveLoadData>
+            /* Actualiza las lecturas para la siguiente solicitud */
+            pot1 = (uint8_t)(ADC_Read(0) >> 2);
+ 122:	80 e0       	ldi	r24, 0x00	; 0
+ 124:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
+ 128:	96 95       	lsr	r25
+ 12a:	87 95       	ror	r24
+ 12c:	96 95       	lsr	r25
+ 12e:	87 95       	ror	r24
+ 130:	d8 2f       	mov	r29, r24
+            pot2 = (uint8_t)(ADC_Read(1) >> 2);
+ 132:	81 e0       	ldi	r24, 0x01	; 1
+ 134:	0e 94 52 00 	call	0xa4	; 0xa4 <ADC_Read>
+ 138:	96 95       	lsr	r25
+ 13a:	87 95       	ror	r24
+ 13c:	96 95       	lsr	r25
+ 13e:	87 95       	ror	r24
+ 140:	c8 2f       	mov	r28, r24
+ 142:	e1 cf       	rjmp	.-62     	; 0x106 <main+0x34>
+        }
+        else if (cmd == CMD_SET_LED)
+ 144:	82 30       	cpi	r24, 0x02	; 2
+ 146:	f9 f6       	brne	.-66     	; 0x106 <main+0x34>
+        {
+            ledValue = SPI_SlaveReceive();
+ 148:	0e 94 e0 00 	call	0x1c0	; 0x1c0 <SPI_SlaveReceive>
+            Leds_SlaveWrite(ledValue);
+ 14c:	0e 94 67 00 	call	0xce	; 0xce <Leds_SlaveWrite>
+ 150:	da cf       	rjmp	.-76     	; 0x106 <main+0x34>
 
-        /* Esperar a que el maestro lea el segundo byte */
-        SPI_SlaveReceive();
- 10e:	0e 94 c1 00 	call	0x182	; 0x182 <SPI_SlaveReceive>
- 112:	e5 cf       	rjmp	.-54     	; 0xde <main+0x10>
+00000152 <SPI_Init>:
+ 152:	61 11       	cpse	r22, r1
+ 154:	0a c0       	rjmp	.+20     	; 0x16a <SPI_Init+0x18>
+ 156:	24 b1       	in	r18, 0x04	; 4
+ 158:	2c 62       	ori	r18, 0x2C	; 44
+ 15a:	24 b9       	out	0x04, r18	; 4
+ 15c:	24 b1       	in	r18, 0x04	; 4
+ 15e:	2f 7e       	andi	r18, 0xEF	; 239
+ 160:	24 b9       	out	0x04, r18	; 4
+ 162:	25 b1       	in	r18, 0x05	; 5
+ 164:	24 60       	ori	r18, 0x04	; 4
+ 166:	25 b9       	out	0x05, r18	; 5
+ 168:	06 c0       	rjmp	.+12     	; 0x176 <SPI_Init+0x24>
+ 16a:	24 b1       	in	r18, 0x04	; 4
+ 16c:	20 61       	ori	r18, 0x10	; 16
+ 16e:	24 b9       	out	0x04, r18	; 4
+ 170:	24 b1       	in	r18, 0x04	; 4
+ 172:	23 7d       	andi	r18, 0xD3	; 211
+ 174:	24 b9       	out	0x04, r18	; 4
+ 176:	66 23       	and	r22, r22
+ 178:	11 f0       	breq	.+4      	; 0x17e <SPI_Init+0x2c>
+ 17a:	20 e4       	ldi	r18, 0x40	; 64
+ 17c:	01 c0       	rjmp	.+2      	; 0x180 <SPI_Init+0x2e>
+ 17e:	20 e5       	ldi	r18, 0x50	; 80
+ 180:	71 30       	cpi	r23, 0x01	; 1
+ 182:	09 f4       	brne	.+2      	; 0x186 <SPI_Init+0x34>
+ 184:	20 62       	ori	r18, 0x20	; 32
+ 186:	81 fd       	sbrc	r24, 1
+ 188:	28 60       	ori	r18, 0x08	; 8
+ 18a:	80 fd       	sbrc	r24, 0
+ 18c:	24 60       	ori	r18, 0x04	; 4
+ 18e:	61 11       	cpse	r22, r1
+ 190:	13 c0       	rjmp	.+38     	; 0x1b8 <SPI_Init+0x66>
+ 192:	e9 2f       	mov	r30, r25
+ 194:	f0 e0       	ldi	r31, 0x00	; 0
+ 196:	cf 01       	movw	r24, r30
+ 198:	88 0f       	add	r24, r24
+ 19a:	99 1f       	adc	r25, r25
+ 19c:	e8 0f       	add	r30, r24
+ 19e:	f9 1f       	adc	r31, r25
+ 1a0:	e0 50       	subi	r30, 0x00	; 0
+ 1a2:	ff 4f       	sbci	r31, 0xFF	; 255
+ 1a4:	90 81       	ld	r25, Z
+ 1a6:	41 81       	ldd	r20, Z+1	; 0x01
+ 1a8:	32 81       	ldd	r19, Z+2	; 0x02
+ 1aa:	89 2f       	mov	r24, r25
+ 1ac:	90 e0       	ldi	r25, 0x00	; 0
+ 1ae:	88 0f       	add	r24, r24
+ 1b0:	99 1f       	adc	r25, r25
+ 1b2:	84 2b       	or	r24, r20
+ 1b4:	28 2b       	or	r18, r24
+ 1b6:	01 c0       	rjmp	.+2      	; 0x1ba <SPI_Init+0x68>
+ 1b8:	30 e0       	ldi	r19, 0x00	; 0
+ 1ba:	2c bd       	out	0x2c, r18	; 44
+ 1bc:	3d bd       	out	0x2d, r19	; 45
+ 1be:	08 95       	ret
 
-00000114 <SPI_Init>:
+000001c0 <SPI_SlaveReceive>:
+ 1c0:	0d b4       	in	r0, 0x2d	; 45
+ 1c2:	07 fe       	sbrs	r0, 7
+ 1c4:	fd cf       	rjmp	.-6      	; 0x1c0 <SPI_SlaveReceive>
+ 1c6:	8e b5       	in	r24, 0x2e	; 46
+ 1c8:	08 95       	ret
 
-    while (!(SPSR & (1 << SPIF)))
-        ; /* espera activa a que termine la transmision (sin delay) */
+000001ca <SPI_SlaveLoadData>:
+ 1ca:	8e bd       	out	0x2e, r24	; 46
+ 1cc:	08 95       	ret
 
-    return SPDR;
-}
- 114:	61 11       	cpse	r22, r1
- 116:	0a c0       	rjmp	.+20     	; 0x12c <SPI_Init+0x18>
- 118:	24 b1       	in	r18, 0x04	; 4
- 11a:	2c 62       	ori	r18, 0x2C	; 44
- 11c:	24 b9       	out	0x04, r18	; 4
- 11e:	24 b1       	in	r18, 0x04	; 4
- 120:	2f 7e       	andi	r18, 0xEF	; 239
- 122:	24 b9       	out	0x04, r18	; 4
- 124:	25 b1       	in	r18, 0x05	; 5
- 126:	24 60       	ori	r18, 0x04	; 4
- 128:	25 b9       	out	0x05, r18	; 5
- 12a:	06 c0       	rjmp	.+12     	; 0x138 <SPI_Init+0x24>
- 12c:	24 b1       	in	r18, 0x04	; 4
- 12e:	20 61       	ori	r18, 0x10	; 16
- 130:	24 b9       	out	0x04, r18	; 4
- 132:	24 b1       	in	r18, 0x04	; 4
- 134:	23 7d       	andi	r18, 0xD3	; 211
- 136:	24 b9       	out	0x04, r18	; 4
- 138:	66 23       	and	r22, r22
- 13a:	11 f0       	breq	.+4      	; 0x140 <SPI_Init+0x2c>
- 13c:	20 e4       	ldi	r18, 0x40	; 64
- 13e:	01 c0       	rjmp	.+2      	; 0x142 <SPI_Init+0x2e>
- 140:	20 e5       	ldi	r18, 0x50	; 80
- 142:	71 30       	cpi	r23, 0x01	; 1
- 144:	09 f4       	brne	.+2      	; 0x148 <SPI_Init+0x34>
- 146:	20 62       	ori	r18, 0x20	; 32
- 148:	81 fd       	sbrc	r24, 1
- 14a:	28 60       	ori	r18, 0x08	; 8
- 14c:	80 fd       	sbrc	r24, 0
- 14e:	24 60       	ori	r18, 0x04	; 4
- 150:	61 11       	cpse	r22, r1
- 152:	13 c0       	rjmp	.+38     	; 0x17a <SPI_Init+0x66>
- 154:	e9 2f       	mov	r30, r25
- 156:	f0 e0       	ldi	r31, 0x00	; 0
- 158:	cf 01       	movw	r24, r30
- 15a:	88 0f       	add	r24, r24
- 15c:	99 1f       	adc	r25, r25
- 15e:	e8 0f       	add	r30, r24
- 160:	f9 1f       	adc	r31, r25
- 162:	e0 50       	subi	r30, 0x00	; 0
- 164:	ff 4f       	sbci	r31, 0xFF	; 255
- 166:	90 81       	ld	r25, Z
- 168:	41 81       	ldd	r20, Z+1	; 0x01
- 16a:	32 81       	ldd	r19, Z+2	; 0x02
- 16c:	89 2f       	mov	r24, r25
- 16e:	90 e0       	ldi	r25, 0x00	; 0
- 170:	88 0f       	add	r24, r24
- 172:	99 1f       	adc	r25, r25
- 174:	84 2b       	or	r24, r20
- 176:	28 2b       	or	r18, r24
- 178:	01 c0       	rjmp	.+2      	; 0x17c <SPI_Init+0x68>
- 17a:	30 e0       	ldi	r19, 0x00	; 0
- 17c:	2c bd       	out	0x2c, r18	; 44
- 17e:	3d bd       	out	0x2d, r19	; 45
- 180:	08 95       	ret
+000001ce <_exit>:
+ 1ce:	f8 94       	cli
 
-00000182 <SPI_SlaveReceive>:
- *  Bloquea hasta que el maestro complete una transaccion SPI
- *  y retorna el byte recibido en SPDR.
- * ========================================================= */
-uint8_t SPI_SlaveReceive(void)
-{
-    while (!(SPSR & (1 << SPIF)))
- 182:	0d b4       	in	r0, 0x2d	; 45
- 184:	07 fe       	sbrs	r0, 7
- 186:	fd cf       	rjmp	.-6      	; 0x182 <SPI_SlaveReceive>
-        ; /* espera a que el maestro envie un byte */
-
-    return SPDR;
- 188:	8e b5       	in	r24, 0x2e	; 46
-}
- 18a:	08 95       	ret
-
-0000018c <SPI_SlaveLoadData>:
- *  PROXIMA transaccion (el envio real ocurre cuando el maestro
- *  genera los pulsos de reloj).
- * ========================================================= */
-void SPI_SlaveLoadData(uint8_t data)
-{
-    SPDR = data;
- 18c:	8e bd       	out	0x2e, r24	; 46
- 18e:	08 95       	ret
-
-00000190 <_exit>:
- 190:	f8 94       	cli
-
-00000192 <__stop_program>:
- 192:	ff cf       	rjmp	.-2      	; 0x192 <__stop_program>
+000001d0 <__stop_program>:
+ 1d0:	ff cf       	rjmp	.-2      	; 0x1d0 <__stop_program>
