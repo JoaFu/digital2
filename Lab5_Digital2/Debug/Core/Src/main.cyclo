@@ -1,0 +1,9 @@
+../Core/Src/main.c:72:13:Verificar_Timeout_Senal	5
+../Core/Src/main.c:93:13:Enviar_Frecuencia_UART	3
+../Core/Src/main.c:137:5:main	3
+../Core/Src/main.c:204:6:SystemClock_Config	4
+../Core/Src/main.c:259:13:MX_TIM2_Init	4
+../Core/Src/main.c:307:13:MX_USART2_UART_Init	2
+../Core/Src/main.c:340:13:MX_GPIO_Init	1
+../Core/Src/main.c:385:6:HAL_TIM_IC_CaptureCallback	5
+../Core/Src/main.c:419:6:Error_Handler	1

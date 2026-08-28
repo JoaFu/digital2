@@ -1,0 +1,9 @@
+../Core/Src/main.c:72:13:Verificar_Timeout_Senal	16	static,ignoring_inline_asm
+../Core/Src/main.c:93:13:Enviar_Frecuencia_UART	120	static,ignoring_inline_asm
+../Core/Src/main.c:137:5:main	80	static
+../Core/Src/main.c:204:6:SystemClock_Config	88	static
+../Core/Src/main.c:259:13:MX_TIM2_Init	32	static
+../Core/Src/main.c:307:13:MX_USART2_UART_Init	8	static
+../Core/Src/main.c:340:13:MX_GPIO_Init	48	static
+../Core/Src/main.c:385:6:HAL_TIM_IC_CaptureCallback	24	static
+../Core/Src/main.c:419:6:Error_Handler	4	static,ignoring_inline_asm
