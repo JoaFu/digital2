@@ -22,8 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <string.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,9 +32,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TIM2_COUNTER_FREQUENCY_HZ  1000000UL
-#define UART_TX_INTERVAL_MS        500UL
-#define SIGNAL_TIMEOUT_MS          1000UL
+/*
+ * Reloj de TIM3 y TIM4: 90 MHz
+ * PSC = 8999 -> frecuencia del contador = 10 kHz
+ * TIM3: ARR = 2499 -> toggle cada 250 ms -> periodo de 500 ms
+ * TIM4: ARR = 9999 -> toggle cada 1 s -> periodo de 2 s
+ */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,90 +46,25 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim2;
-
-UART_HandleTypeDef huart2;
+TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
-// LEDs jugador 1 (PA0, PA1, PA6, PA7)
-volatile uint32_t captura_anterior = 0;
-volatile uint32_t periodo_ticks = 0;
-volatile uint32_t ultimo_flanco_ms = 0;
-volatile uint8_t primera_captura = 0;
-volatile uint8_t frecuencia_valida = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_TIM2_Init(void);
-static void MX_USART2_UART_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
-static void Verificar_Timeout_Senal(void);
-static void Enviar_Frecuencia_UART(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static void Verificar_Timeout_Senal(void)
-{
-  uint32_t tiempo_actual = HAL_GetTick();
 
-  if ((primera_captura != 0U) &&
-      ((tiempo_actual - ultimo_flanco_ms) > SIGNAL_TIMEOUT_MS))
-  {
-    __disable_irq();
-
-    if ((primera_captura != 0U) &&
-        ((tiempo_actual - ultimo_flanco_ms) > SIGNAL_TIMEOUT_MS))
-    {
-      primera_captura = 0U;
-      frecuencia_valida = 0U;
-      periodo_ticks = 0U;
-    }
-
-    __enable_irq();
-  }
-}
-
-static void Enviar_Frecuencia_UART(void)
-{
-  char mensaje_uart[80];
-  uint32_t periodo_local;
-  uint8_t valida_local;
-  uint32_t frecuencia_mHz;
-  uint32_t frecuencia_entera;
-  uint32_t frecuencia_decimal;
-
-  __disable_irq();
-  periodo_local = periodo_ticks;
-  valida_local = frecuencia_valida;
-  __enable_irq();
-
-  if ((valida_local != 0U) && (periodo_local != 0U))
-  {
-    frecuencia_mHz = (uint32_t)
-        (((uint64_t)TIM2_COUNTER_FREQUENCY_HZ * 1000ULL) / periodo_local);
-
-    frecuencia_entera = frecuencia_mHz / 1000UL;
-    frecuencia_decimal = frecuencia_mHz % 1000UL;
-
-    snprintf(mensaje_uart, sizeof(mensaje_uart),
-             "Frecuencia: %lu.%03lu Hz\r\n",
-             (unsigned long)frecuencia_entera,
-             (unsigned long)frecuencia_decimal);
-  }
-  else
-  {
-    snprintf(mensaje_uart, sizeof(mensaje_uart),
-             "Frecuencia: SIN SENAL\r\n");
-  }
-
-  HAL_UART_Transmit(&huart2,
-                    (uint8_t *)mensaje_uart,
-                    (uint16_t)strlen(mensaje_uart),
-                    100U);
-}
 /* USER CODE END 0 */
 
 /**
@@ -138,9 +75,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  uint32_t ultimo_envio_uart_ms = 0;
-  const char mensaje_inicio[] =
-      "\r\nMedidor de frecuencia listo. Entrada PB10 - TIM2_CH3\r\n";
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -161,18 +96,18 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_TIM2_Init();
-  MX_USART2_UART_Init();
+  MX_TIM3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_3) != HAL_OK)
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
   {
     Error_Handler();
   }
 
-  HAL_UART_Transmit(&huart2,
-                    (uint8_t *)mensaje_inicio,
-                    (uint16_t)(sizeof(mensaje_inicio) - 1U),
-                    100U);
+  if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -181,18 +116,7 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET);
-
     /* USER CODE BEGIN 3 */
-    Verificar_Timeout_Senal();
-
-    if ((HAL_GetTick() - ultimo_envio_uart_ms) >= UART_TX_INTERVAL_MS)
-    {
-      ultimo_envio_uart_ms = HAL_GetTick();
-      Enviar_Frecuencia_UART();
-    }
   }
   /* USER CODE END 3 */
 }
@@ -252,84 +176,67 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief TIM2 Initialization Function
+  * @brief TIM3 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM2_Init(void)
+static void MX_TIM3_Init(void)
 {
+  /* USER CODE BEGIN TIM3_Init 0 */
 
-  /* USER CODE BEGIN TIM2_Init 0 */
+  /* USER CODE END TIM3_Init 0 */
 
-  /* USER CODE END TIM2_Init 0 */
+  /* USER CODE BEGIN TIM3_Init 1 */
 
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
+  /* USER CODE END TIM3_Init 1 */
+  __HAL_RCC_TIM3_CLK_ENABLE();
 
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 89;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4294967295;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_IC_Init(&htim2) != HAL_OK)
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 8999;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 2499;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM2_Init 2 */
-
-  /* USER CODE END TIM2_Init 2 */
-
+  /* USER CODE BEGIN TIM3_Init 2 */
+  HAL_NVIC_SetPriority(TIM3_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(TIM3_IRQn);
+  /* USER CODE END TIM3_Init 2 */
 }
 
 /**
-  * @brief USART2 Initialization Function
+  * @brief TIM4 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART2_UART_Init(void)
+static void MX_TIM4_Init(void)
 {
+  /* USER CODE BEGIN TIM4_Init 0 */
 
-  /* USER CODE BEGIN USART2_Init 0 */
+  /* USER CODE END TIM4_Init 0 */
 
-  /* USER CODE END USART2_Init 0 */
+  /* USER CODE BEGIN TIM4_Init 1 */
 
-  /* USER CODE BEGIN USART2_Init 1 */
+  /* USER CODE END TIM4_Init 1 */
+  __HAL_RCC_TIM4_CLK_ENABLE();
 
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 8999;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 9999;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
+  /* USER CODE BEGIN TIM4_Init 2 */
+  HAL_NVIC_SetPriority(TIM4_IRQn, 1, 1);
+  HAL_NVIC_EnableIRQ(TIM4_IRQn);
+  /* USER CODE END TIM4_Init 2 */
 }
 
 /**
@@ -345,25 +252,17 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_6, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : LD2_Pin PA6 */
-  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_6;
+  /*Configure GPIO pin : PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -382,32 +281,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  uint32_t captura_actual;
-  uint32_t periodo_actual;
-
-  if ((htim->Instance == TIM2) && (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3))
+  if (htim->Instance == TIM3)
   {
-    captura_actual = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_3);
-    ultimo_flanco_ms = HAL_GetTick();
-
-    if (primera_captura != 0U)
-    {
-      periodo_actual = captura_actual - captura_anterior;
-
-      if (periodo_actual != 0U)
-      {
-        periodo_ticks = periodo_actual;
-        frecuencia_valida = 1U;
-      }
-    }
-    else
-    {
-      primera_captura = 1U;
-    }
-
-    captura_anterior = captura_actual;
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_6);
+  }
+  else if (htim->Instance == TIM4)
+  {
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
   }
 }
 /* USER CODE END 4 */
@@ -426,19 +309,20 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
+  * @param  line: source line number
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  (void)file;
+  (void)line;
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
