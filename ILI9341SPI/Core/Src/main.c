@@ -16,7 +16,6 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
@@ -24,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "ili9341.h"
 #include "bitmaps.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,10 +58,11 @@ typedef struct
 #define ENEMIGO_VELOCIDAD        2
 #define BALA_VELOCIDAD           5
 
-#define LIMITE_SUPERIOR          0
+#define MARCADOR_ALTO            (fontYSizeSmal + 8)
+#define LIMITE_SUPERIOR          MARCADOR_ALTO
 #define LIMITE_INFERIOR          224
 
-#define ENEMIGO_LIMITE_SUPERIOR  16
+#define ENEMIGO_LIMITE_SUPERIOR  MARCADOR_ALTO
 #define ENEMIGO_LIMITE_INFERIOR  208
 
 #define COLOR_FONDO              0x0000
@@ -80,9 +81,15 @@ typedef struct
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim7;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+
+/* Enemigos eliminados en la partida actual. */
+uint32_t contador = 0;
 
 /*
  * Fondo procedural de estrellas.
@@ -273,16 +280,16 @@ uint32_t tiempoEstrellasAnterior = 0;
 
 /* USER CODE END PV */
 
-
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
-
-
+static void MX_TIM3_Init(void);
+static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
+void DibujarContador(void);
 void DibujarFondoEstrellas(void);
 void ActualizarEstrellas(void);
 void RestaurarFondoEstrellas(int x, int y, int ancho, int alto);
@@ -304,12 +311,27 @@ int ColisionBalaEnemigo(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+void DibujarContador(void)
+{
+    char texto[32];
+
+    /* Ancho fijo: los espacios borran cifras sobrantes al reiniciar. */
+    snprintf(texto, sizeof(texto), "BAJAS: %-10lu", (unsigned long)contador);
+    LCD_Print(texto, 8, 4, 1, 0xFFFF, COLOR_FONDO);
+}
+
 void DibujarFondoEstrellas(void)
 {
 	LCD_Clear(COLOR_FONDO);
 
 	for (uint32_t i = 0; i < CANTIDAD_ESTRELLAS; i++)
 	{
+        /* Las estrellas no dibujan ni borran dentro del marcador. */
+        if (estrellas[i].y < MARCADOR_ALTO)
+        {
+            continue;
+        }
+
 		FillRect(estrellas[i].x,
 				 estrellas[i].y,
 				 estrellas[i].tamano,
@@ -331,6 +353,12 @@ void ActualizarEstrellas(void)
 
 	for (uint32_t i = 0; i < CANTIDAD_ESTRELLAS; i++)
 	{
+        /* Las estrellas no dibujan ni borran dentro del marcador. */
+        if (estrellas[i].y < MARCADOR_ALTO)
+        {
+            continue;
+        }
+
 		// Borra la posicion anterior de la estrella
 		FillRect(estrellas[i].x,
 				 estrellas[i].y,
@@ -366,6 +394,12 @@ void RestaurarFondoEstrellas(int x,
 
 	for (uint32_t i = 0; i < CANTIDAD_ESTRELLAS; i++)
 	{
+        /* Las estrellas no dibujan ni borran dentro del marcador. */
+        if (estrellas[i].y < MARCADOR_ALTO)
+        {
+            continue;
+        }
+
 		int estrellaX = estrellas[i].x;
 		int estrellaY = estrellas[i].y;
 		int estrellaTamano = estrellas[i].tamano;
@@ -451,37 +485,34 @@ int main(void)
 
   /* USER CODE END 1 */
 
-
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
-
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
-
   /* Configure the system clock */
   SystemClock_Config();
-
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
-
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
-
-
+  MX_TIM3_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
 
   LCD_Init();
   DibujarFondoEstrellas();
+  contador = 0;
+  DibujarContador();
 
   ConvertirSpriteRGB565(naveBytes, nave, SPRITE_SIZE * SPRITE_SIZE);
   ConvertirSpriteRGB565(enemigoSmllBytes, enemigoPec, SPRITE_SIZE * SPRITE_SIZE);
@@ -502,7 +533,6 @@ int main(void)
   tiempoEstrellasAnterior = HAL_GetTick();
 
   /* USER CODE END 2 */
-
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -592,6 +622,12 @@ int main(void)
 	  // Colision bala-enemigo
 	  if (ColisionBalaEnemigo())
 	  {
+          /* Una baja por impacto; evita desbordar el contador. */
+          if (contador < UINT32_MAX)
+          {
+              contador++;
+              DibujarContador();
+          }
 		  balaActiva = 0;
 		  enemigoVivo = 0;
 		  tiempoEnemigoMuerto = HAL_GetTick();
@@ -682,7 +718,6 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -702,55 +737,33 @@ void SystemClock_Config(void)
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue =
-		  RCC_HSICALIBRATION_DEFAULT;
-
-  RCC_OscInitStruct.PLL.PLLState =
-		  RCC_PLL_ON;
-
-  RCC_OscInitStruct.PLL.PLLSource =
-		  RCC_PLLSOURCE_HSI;
-
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 16;
   RCC_OscInitStruct.PLL.PLLN = 336;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = 2;
   RCC_OscInitStruct.PLL.PLLR = 2;
-
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct)
-		  != HAL_OK)
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType =
-		  RCC_CLOCKTYPE_HCLK |
-		  RCC_CLOCKTYPE_SYSCLK |
-		  RCC_CLOCKTYPE_PCLK1 |
-		  RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  RCC_ClkInitStruct.SYSCLKSource =
-		  RCC_SYSCLKSOURCE_PLLCLK;
-
-  RCC_ClkInitStruct.AHBCLKDivider =
-		  RCC_SYSCLK_DIV1;
-
-  RCC_ClkInitStruct.APB1CLKDivider =
-		  RCC_HCLK_DIV2;
-
-  RCC_ClkInitStruct.APB2CLKDivider =
-		  RCC_HCLK_DIV1;
-
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct,
-		  	  	  	  	  FLASH_LATENCY_2)
-		  != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
 }
-
 
 /**
   * @brief SPI1 Initialization Function
@@ -767,56 +780,111 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 1 */
 
   /* USER CODE END SPI1_Init 1 */
-
-
   /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
-
-  hspi1.Init.Mode =
-		  SPI_MODE_MASTER;
-
-  hspi1.Init.Direction =
-		  SPI_DIRECTION_2LINES;
-
-  hspi1.Init.DataSize =
-		  SPI_DATASIZE_8BIT;
-
-  hspi1.Init.CLKPolarity =
-		  SPI_POLARITY_LOW;
-
-  hspi1.Init.CLKPhase =
-		  SPI_PHASE_1EDGE;
-
-  hspi1.Init.NSS =
-		  SPI_NSS_SOFT;
-
-  hspi1.Init.BaudRatePrescaler =
-		  SPI_BAUDRATEPRESCALER_2;
-
-  hspi1.Init.FirstBit =
-		  SPI_FIRSTBIT_MSB;
-
-  hspi1.Init.TIMode =
-		  SPI_TIMODE_DISABLE;
-
-  hspi1.Init.CRCCalculation =
-		  SPI_CRCCALCULATION_DISABLE;
-
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi1.Init.CRCPolynomial = 10;
-
-
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
   {
     Error_Handler();
   }
-
-
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
 
 }
 
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 255;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 0;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 5249;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+
+  /* USER CODE END TIM7_Init 2 */
+
+}
 
 /**
   * @brief USART2 Initialization Function
@@ -833,45 +901,23 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 1 */
 
   /* USER CODE END USART2_Init 1 */
-
-
-  huart2.Instance =
-		  USART2;
-
-  huart2.Init.BaudRate =
-		  115200;
-
-  huart2.Init.WordLength =
-		  UART_WORDLENGTH_8B;
-
-  huart2.Init.StopBits =
-		  UART_STOPBITS_1;
-
-  huart2.Init.Parity =
-		  UART_PARITY_NONE;
-
-  huart2.Init.Mode =
-		  UART_MODE_TX_RX;
-
-  huart2.Init.HwFlowCtl =
-		  UART_HWCONTROL_NONE;
-
-  huart2.Init.OverSampling =
-		  UART_OVERSAMPLING_16;
-
-
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
-
-
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
 
 }
-
 
 /**
   * @brief GPIO Initialization Function
@@ -881,12 +927,9 @@ static void MX_USART2_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
-
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -894,120 +937,56 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LCD_RESET_GPIO_Port, LCD_RESET_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LCD_RESET_GPIO_Port,
-		  	  	  	LCD_RESET_Pin,
-					GPIO_PIN_RESET);
-
+  HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LCD_DC_GPIO_Port,
-		  	  	  	LCD_DC_Pin,
-					GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LCD_CS_Pin|SD_CS_Pin, GPIO_PIN_RESET);
 
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB,
-		  	  	  	LCD_CS_Pin |
-					SD_CS_Pin,
-					GPIO_PIN_RESET);
-
-
-  /*
-   * B1 se mantiene con la configuracion
-   * generada originalmente por CubeMX.
-   */
-  GPIO_InitStruct.Pin =
-		  B1_Pin;
-
-  GPIO_InitStruct.Mode =
-		  GPIO_MODE_IT_FALLING;
-
-  GPIO_InitStruct.Pull =
-		  GPIO_NOPULL;
-
-  HAL_GPIO_Init(B1_GPIO_Port,
-		  	  	&GPIO_InitStruct);
-
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LCD_RESET_Pin */
-  GPIO_InitStruct.Pin =
-		  LCD_RESET_Pin;
-
-  GPIO_InitStruct.Mode =
-		  GPIO_MODE_OUTPUT_PP;
-
-  GPIO_InitStruct.Pull =
-		  GPIO_NOPULL;
-
-  GPIO_InitStruct.Speed =
-		  GPIO_SPEED_FREQ_MEDIUM;
-
-  HAL_GPIO_Init(LCD_RESET_GPIO_Port,
-		  	  	&GPIO_InitStruct);
-
+  GPIO_InitStruct.Pin = LCD_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(LCD_RESET_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : BTN_UP_Pin BTN_DOWN_Pin */
-  GPIO_InitStruct.Pin =
-		  BTN_UP_Pin |
-		  BTN_DOWN_Pin;
-
-  GPIO_InitStruct.Mode =
-		  GPIO_MODE_INPUT;
-
-  GPIO_InitStruct.Pull =
-		  GPIO_PULLUP;
-
-  HAL_GPIO_Init(GPIOA,
-		  	  	&GPIO_InitStruct);
-
+  GPIO_InitStruct.Pin = BTN_UP_Pin|BTN_DOWN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LCD_DC_Pin */
-  GPIO_InitStruct.Pin =
-		  LCD_DC_Pin;
-
-  GPIO_InitStruct.Mode =
-		  GPIO_MODE_OUTPUT_PP;
-
-  GPIO_InitStruct.Pull =
-		  GPIO_NOPULL;
-
-  GPIO_InitStruct.Speed =
-		  GPIO_SPEED_FREQ_MEDIUM;
-
-  HAL_GPIO_Init(LCD_DC_GPIO_Port,
-		  	  	&GPIO_InitStruct);
-
+  GPIO_InitStruct.Pin = LCD_DC_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(LCD_DC_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LCD_CS_Pin SD_CS_Pin */
-  GPIO_InitStruct.Pin =
-		  LCD_CS_Pin |
-		  SD_CS_Pin;
-
-  GPIO_InitStruct.Mode =
-		  GPIO_MODE_OUTPUT_PP;
-
-  GPIO_InitStruct.Pull =
-		  GPIO_NOPULL;
-
-  GPIO_InitStruct.Speed =
-		  GPIO_SPEED_FREQ_MEDIUM;
-
-  HAL_GPIO_Init(GPIOB,
-		  	  	&GPIO_InitStruct);
-
+  GPIO_InitStruct.Pin = LCD_CS_Pin|SD_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
-
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
-
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -1015,7 +994,6 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
-
   /* USER CODE BEGIN Error_Handler_Debug */
 
   /* User can add his own implementation to report the HAL error return state */
@@ -1030,10 +1008,7 @@ void Error_Handler(void)
 
   /* USER CODE END Error_Handler_Debug */
 }
-
-
 #ifdef USE_FULL_ASSERT
-
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
@@ -1041,10 +1016,8 @@ void Error_Handler(void)
   * @param  line: assert_param error line source number
   * @retval None
   */
-void assert_failed(uint8_t *file,
-				   uint32_t line)
+void assert_failed(uint8_t *file, uint32_t line)
 {
-
   /* USER CODE BEGIN 6 */
 
   /* User can add his own implementation to report the file name and line number,
@@ -1052,5 +1025,4 @@ void assert_failed(uint8_t *file,
 
   /* USER CODE END 6 */
 }
-
 #endif /* USE_FULL_ASSERT */
