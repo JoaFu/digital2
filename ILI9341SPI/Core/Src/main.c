@@ -30,6 +30,36 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef enum
+{
+    ESTADO_INICIO,
+    ESTADO_NIVEL_1,
+    ESTADO_NIVEL_2,
+    ESTADO_GAMEOVER,
+    ESTADO_YOU_WIN
+} EstadoJuego;
+
+typedef struct
+{
+    int x, y;
+    int direccion;
+    int limiteIzquierdo, limiteDerecho;
+    uint8_t vivo;
+    uint32_t ultimoDisparo;
+} Enemigo;
+
+typedef struct
+{
+    int x, y;
+    uint8_t activa;
+} Proyectil;
+
+typedef struct
+{
+    uint8_t crudo, estable;
+    uint32_t ultimoCambio;
+} BotonFiltrado;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -39,6 +69,9 @@
 #define SCREEN_HEIGHT            240
 
 #define SPRITE_SIZE              16
+// Ambas balas vuelven al tamano original de 16 x 16.
+#define BALA_ESCALA              1
+#define BALA_TAMANO              (SPRITE_SIZE * BALA_ESCALA)
 
 // Pantalla horizontal: la nave (abajo) y el enemigo (arriba) solo se mueven
 // de izquierda a derecha; la bala sube.
@@ -71,7 +104,13 @@
 
 #define FRAME_DELAY_MS           20
 #define ESTRELLAS_DELAY_MS       100
-#define RESPAWN_ENEMIGO_MS       1000
+// Parametros del esqueleto: una vida, tres enemigos en nivel 2.
+#define MAX_ENEMIGOS             3
+#define BALA_ENEMIGA_VELOCIDAD    3
+#define DISPARO_ENEMIGO_MS        1200U
+#define DESFASE_DISPARO_MS        250U
+#define RESULTADO_MS              2500U
+#define ANTIRREBOTE_MS            30U
 
 /* USER CODE END PD */
 
@@ -90,39 +129,34 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-// Enemigos eliminados en la partida actual.
-uint32_t contador = 0;
+static EstadoJuego estadoJuego = ESTADO_INICIO;
+static uint32_t tiempoEstado = 0;
+static uint32_t tiempoFrameAnterior = 0;
+static uint32_t tiempoEstrellasAnterior = 0;
+static uint32_t contador = 0;
 
-extern const uint16_t fondo[];
+// Estado de la partida. Los datos graficos siguen en galaga_recursos.c.
+static Enemigo enemigos[MAX_ENEMIGOS];
+static Proyectil balasEnemigas[MAX_ENEMIGOS];
+static Proyectil balaJugador;
+static uint8_t cantidadEnemigos = 0;
+static int naveX = NAVE_X_INICIAL;
+static int naveY = NAVE_Y_INICIAL;
 
-// Posicion de la nave
-int naveX = NAVE_X_INICIAL;
-int naveY = NAVE_Y_INICIAL;
-
-// Posicion y estado del enemigo
-int enemigoX = ENEMIGO_X_INICIAL;
-int enemigoY = ENEMIGO_Y_INICIAL;
-
-int enemigoDireccion = 1;
-int enemigoVivo = 1;
-
-// Posicion y estado de la bala
-int balaX = 0;
-int balaY = 0;
-
-int balaActiva = 0;
-
-// Estado anterior del boton de disparo
-int fireAnterior = 0;
-
-// Tiempo utilizado para respawn
-uint32_t tiempoEnemigoMuerto = 0;
-
-uint32_t tiempoEstrellasAnterior = 0;
+static BotonFiltrado botonB1;
+static uint8_t inicioArmado = 0;
+static uint8_t inicioSolicitado = 0;
+static uint8_t disparoPendiente = 0;
 
 static uint32_t notaActual = 0;
 static uint32_t inicioNota = 0;
 static uint8_t melodiaEnCurso = 0;
+static const NotaGalaga *melodiaActual = melodiaGalaga;
+static uint32_t cantidadNotasActual = CANTIDAD_NOTAS_GALAGA;
+static uint8_t repetirMelodia = 1;
+
+// Memoria temporal de transmision; los arreglos de imagen siguen en la libreria.
+static uint8_t bufferLCD[512];
 
 /* USER CODE END PV */
 
@@ -140,42 +174,155 @@ void DibujarContador(void);
 void DibujarFondoEstrellas(void);
 void ActualizarEstrellas(void);
 void RestaurarFondoEstrellas(int x, int y, int ancho, int alto);
-
-void ConvertirSpriteRGB565(const uint8_t *bytes,
-						   uint16_t *sprite,
-						   int cantidadPixeles);
-
-void Disparar(void);
-int ColisionBalaEnemigo(void);
-
+void ConvertirSpriteRGB565(const uint8_t *bytes, uint16_t *sprite, int cantidadPixeles);
 void Audio_Iniciar(void);
 void Audio_Detener(void);
 void Audio_Actualizar(void);
 static void Audio_TocarNota(uint16_t frecuencia);
+static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t repetir);
+
+static void FSM_CambiarEstado(EstadoJuego nuevo);
+static void FSM_Actualizar(void);
+static void PrepararNivel(void);
+static void ActualizarPartida(uint32_t ahora);
+static void Pantalla_Enviar(uint8_t *datos, uint16_t cantidad);
+static void Pantalla_Abrir(int x, int y, int ancho, int alto);
+static void Pantalla_Rellenar(int x, int y, int ancho, int alto, uint16_t color);
+static void Pantalla_Bitmap(int x, int y, int ancho, int alto,
+                            const uint16_t *imagen, uint8_t invertir, int minimoY);
+static void BorrarActores(void);
+static void DibujarActores(void);
+static void DibujarProyectil(const Proyectil *p, uint8_t haciaAbajo);
+static void BorrarProyectil(const Proyectil *p);
+static uint8_t ActualizarB1(uint32_t ahora);
+static uint8_t Impacta(const Proyectil *p, int x, int y);
+static uint8_t EnemigosVivos(void);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+// Transferencias en bloques: evita llamar a HAL una vez por cada byte RGB565.
+// Buffer compartido de 512 bytes; estas funciones solo se usan desde main.
+static void Pantalla_Enviar(uint8_t *datos, uint16_t cantidad)
+{
+    if (HAL_SPI_Transmit(&hspi1, datos, cantidad, 100U) != HAL_OK)
+    {
+        HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET);
+        Error_Handler();
+    }
+}
+
+static void Pantalla_Abrir(int x, int y, int ancho, int alto)
+{
+    uint8_t comando;
+    uint8_t limites[4];
+    uint16_t finX = (uint16_t)(x + ancho - 1);
+    uint16_t finY = (uint16_t)(y + alto - 1);
+    HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
+    comando = 0x2A;
+    Pantalla_Enviar(&comando, 1U);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_SET);
+    limites[0] = (uint8_t)(x >> 8);
+    limites[1] = (uint8_t)x;
+    limites[2] = (uint8_t)(finX >> 8);
+    limites[3] = (uint8_t)finX;
+    Pantalla_Enviar(limites, 4U);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
+    comando = 0x2B;
+    Pantalla_Enviar(&comando, 1U);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_SET);
+    limites[0] = (uint8_t)(y >> 8);
+    limites[1] = (uint8_t)y;
+    limites[2] = (uint8_t)(finY >> 8);
+    limites[3] = (uint8_t)finY;
+    Pantalla_Enviar(limites, 4U);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
+    comando = 0x2C;
+    Pantalla_Enviar(&comando, 1U);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_SET);
+}
+
+static void Pantalla_Rellenar(int x, int y, int ancho, int alto, uint16_t color)
+{
+    int x2 = x + ancho;
+    int y2 = y + alto;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x2 > SCREEN_WIDTH) x2 = SCREEN_WIDTH;
+    if (y2 > SCREEN_HEIGHT) y2 = SCREEN_HEIGHT;
+    if (x >= x2 || y >= y2) return;
+
+    uint32_t restantes = (uint32_t)(x2 - x) * (uint32_t)(y2 - y);
+    uint32_t bloque = restantes < sizeof(bufferLCD) / 2U ? restantes : sizeof(bufferLCD) / 2U;
+    for (uint32_t i = 0; i < bloque; i++)
+    {
+        bufferLCD[2U * i] = (uint8_t)(color >> 8);
+        bufferLCD[2U * i + 1U] = (uint8_t)color;
+    }
+    Pantalla_Abrir(x, y, x2 - x, y2 - y);
+    while (restantes > 0U)
+    {
+        uint32_t cantidad = restantes < bloque ? restantes : bloque;
+        Pantalla_Enviar(bufferLCD, (uint16_t)(cantidad * 2U));
+        restantes -= cantidad;
+    }
+    HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET);
+}
+
+static void Pantalla_Bitmap(int x, int y, int ancho, int alto,
+                            const uint16_t *imagen, uint8_t invertir, int minimoY)
+{
+    int x1 = x < 0 ? 0 : x;
+    int y1 = y < minimoY ? minimoY : y;
+    int x2 = x + ancho;
+    int y2 = y + alto;
+    if (x2 > SCREEN_WIDTH) x2 = SCREEN_WIDTH;
+    if (y2 > SCREEN_HEIGHT) y2 = SCREEN_HEIGHT;
+    if (x1 >= x2 || y1 >= y2) return;
+
+    uint16_t usados = 0;
+    Pantalla_Abrir(x1, y1, x2 - x1, y2 - y1);
+    for (int destinoY = y1; destinoY < y2; destinoY++)
+    {
+        int fila = destinoY - y;
+        if (invertir) fila = alto - 1 - fila;
+        const uint16_t *origen = imagen + fila * ancho + (x1 - x);
+        for (int columna = x1; columna < x2; columna++)
+        {
+            uint16_t pixel = *origen++;
+            bufferLCD[usados++] = (uint8_t)(pixel >> 8);
+            bufferLCD[usados++] = (uint8_t)pixel;
+            if (usados == sizeof(bufferLCD))
+            {
+                Pantalla_Enviar(bufferLCD, usados);
+                usados = 0;
+            }
+        }
+    }
+    if (usados != 0U) Pantalla_Enviar(bufferLCD, usados);
+    HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET);
+}
+
 void DibujarPantallaInicio(void)
 {
     // Lee directamente desde Flash y envia cada pixel al LCD.
-    LCD_Bitmap(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, pantallaInicio);
+    Pantalla_Bitmap(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, pantallaInicio, 0U, 0);
 }
 
 void DibujarContador(void)
 {
-    char texto[32];
-
-    // Ancho fijo: los espacios borran cifras sobrantes al reiniciar.
-    snprintf(texto, sizeof(texto), "BAJAS: %-10lu", (unsigned long)contador);
+    char texto[40];
+    unsigned int nivel = (estadoJuego == ESTADO_NIVEL_1) ? 1U : 2U;
+    snprintf(texto, sizeof(texto), "NIVEL %u  BAJAS: %lu/4", nivel, (unsigned long)contador);
+    Pantalla_Rellenar(0, 0, SCREEN_WIDTH, MARCADOR_ALTO, COLOR_FONDO);
     LCD_Print(texto, 8, 4, 1, 0xFFFF, COLOR_FONDO);
 }
-
 void DibujarFondoEstrellas(void)
 {
-	LCD_Clear(COLOR_FONDO);
+	Pantalla_Rellenar(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_FONDO);
 
 	for (uint32_t i = 0; i < CANTIDAD_ESTRELLAS; i++)
 	{
@@ -185,7 +332,7 @@ void DibujarFondoEstrellas(void)
             continue;
         }
 
-		FillRect(estrellas[i].x,
+		Pantalla_Rellenar(estrellas[i].x,
 				 estrellas[i].y,
 				 estrellas[i].tamano,
 				 estrellas[i].tamano,
@@ -211,7 +358,7 @@ void ActualizarEstrellas(void)
 		// Borra la posicion anterior (nada se dibuja dentro del marcador)
 		if (e->y >= MARCADOR_ALTO)
 		{
-			FillRect(e->x, e->y, e->tamano, e->tamano, COLOR_FONDO);
+			Pantalla_Rellenar(e->x, e->y, e->tamano, e->tamano, COLOR_FONDO);
 		}
 
 		// Movimiento hacia abajo; al salir reaparece arriba, bajo el marcador
@@ -227,7 +374,7 @@ void ActualizarEstrellas(void)
 		// Dibuja la estrella en su nueva posicion
 		if (e->y >= MARCADOR_ALTO)
 		{
-			FillRect(e->x, e->y, e->tamano, e->tamano, e->color);
+			Pantalla_Rellenar(e->x, e->y, e->tamano, e->tamano, e->color);
 		}
 	}
 }
@@ -237,7 +384,7 @@ void RestaurarFondoEstrellas(int x,
 							 int ancho,
 							 int alto)
 {
-	FillRect(x, y, ancho, alto, COLOR_FONDO);
+	Pantalla_Rellenar(x, y, ancho, alto, COLOR_FONDO);
 
 	for (uint32_t i = 0; i < CANTIDAD_ESTRELLAS; i++)
 	{
@@ -256,7 +403,7 @@ void RestaurarFondoEstrellas(int x,
 			(estrellaY < y + alto) &&
 			(estrellaY + estrellaTamano > y))
 		{
-			FillRect(estrellas[i].x,
+			Pantalla_Rellenar(estrellas[i].x,
 					 estrellas[i].y,
 					 estrellas[i].tamano,
 					 estrellas[i].tamano,
@@ -274,34 +421,6 @@ void ConvertirSpriteRGB565(const uint8_t *bytes,
 		sprite[i] = ((uint16_t)bytes[i * 2] << 8) |
 					bytes[i * 2 + 1];
 	}
-}
-
-void Disparar(void)
-{
-	if (!balaActiva)
-	{
-		balaX = naveX;
-		balaY = naveY - SPRITE_SIZE;
-		balaActiva = 1;
-	}
-}
-
-int ColisionBalaEnemigo(void)
-{
-	if (!balaActiva || !enemigoVivo)
-	{
-		return 0;
-	}
-
-	if ((balaX < enemigoX + SPRITE_SIZE) &&
-		(balaX + SPRITE_SIZE > enemigoX) &&
-		(balaY < enemigoY + SPRITE_SIZE) &&
-		(balaY + SPRITE_SIZE > enemigoY))
-	{
-		return 1;
-	}
-
-	return 0;
 }
 
 static void Audio_TocarNota(uint16_t frecuencia)
@@ -333,12 +452,22 @@ static void Audio_TocarNota(uint16_t frecuencia)
 
 void Audio_Iniciar(void)
 {
+    Audio_Reproducir(melodiaGalaga, CANTIDAD_NOTAS_GALAGA, 1U);
+}
+
+static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t repetir)
+{
+    if (melodiaEnCurso) Audio_Detener();
+    if (notas == NULL || cantidad == 0U) return;
+    melodiaActual = notas;
+    cantidadNotasActual = cantidad;
+    repetirMelodia = repetir;
     notaActual = 0U;
     melodiaEnCurso = 0U;
 
     // Se conserva esta configuracion aunque CubeMX regenere PSC=0.
     __HAL_TIM_SET_PRESCALER(&htim3, 83U);
-    Audio_TocarNota(melodiaGalaga[notaActual].frecuencia);
+    Audio_TocarNota(melodiaActual[notaActual].frecuencia);
 
     if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) != HAL_OK)
     {
@@ -359,15 +488,20 @@ void Audio_Actualizar(void)
     uint32_t ahora = HAL_GetTick();
 
     // La resta sin signo funciona tambien al desbordarse HAL_GetTick.
-    if ((uint32_t)(ahora - inicioNota) >= melodiaGalaga[notaActual].duracion)
+    if ((uint32_t)(ahora - inicioNota) >= melodiaActual[notaActual].duracion)
     {
         notaActual++;
-        if (notaActual >= sizeof(melodiaGalaga) / sizeof(melodiaGalaga[0]))
+        if (notaActual >= cantidadNotasActual)
         {
+            if (!repetirMelodia)
+            {
+                Audio_Detener();
+                return;
+            }
             notaActual = 0U;
         }
 
-        Audio_TocarNota(melodiaGalaga[notaActual].frecuencia);
+        Audio_TocarNota(melodiaActual[notaActual].frecuencia);
         inicioNota = ahora;
     }
 }
@@ -384,6 +518,313 @@ void Audio_Detener(void)
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
     __HAL_TIM_SET_COUNTER(&htim3, 0U);
     notaActual = 0U;
+}
+
+
+// Cada entrada de estado dibuja su pantalla una sola vez.
+static void FSM_CambiarEstado(EstadoJuego nuevo)
+{
+    if (melodiaEnCurso)
+    {
+        Audio_Detener();
+    }
+    estadoJuego = nuevo;
+    disparoPendiente = 0;
+
+    switch (estadoJuego)
+    {
+        case ESTADO_INICIO:
+            inicioArmado = 0;
+            inicioSolicitado = 0;
+            DibujarPantallaInicio();
+            Audio_Iniciar();
+            break;
+
+        case ESTADO_NIVEL_1:
+            contador = 0;
+            PrepararNivel();
+            break;
+
+        case ESTADO_NIVEL_2:
+            PrepararNivel();
+            break;
+
+        case ESTADO_GAMEOVER:
+        case ESTADO_YOU_WIN:
+            Pantalla_Rellenar(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_FONDO);
+            if (estadoJuego == ESTADO_GAMEOVER)
+            {
+                LCD_Print("GAME OVER", (SCREEN_WIDTH - 9 * fontXSizeBig) / 2,
+                          100, 2, 0xF800, COLOR_FONDO);
+            }
+            else
+            {
+                LCD_Print("YOU WIN", (SCREEN_WIDTH - 7 * fontXSizeBig) / 2,
+                          100, 2, 0x07E0, COLOR_FONDO);
+            }
+            LCD_Print("VOLVIENDO AL INICIO", 40, 145, 1, 0xFFFF, COLOR_FONDO);
+            // Inicia el sonido despues de dibujar, para no alargar la primera nota.
+            if (estadoJuego == ESTADO_GAMEOVER)
+                Audio_Reproducir(melodiaGameOver, CANTIDAD_NOTAS_GAMEOVER, 0U);
+            else
+                Audio_Reproducir(melodiaVictoria, CANTIDAD_NOTAS_VICTORIA, 0U);
+            break;
+    }
+    // Cuenta la duracion desde que termino de dibujarse la pantalla.
+    tiempoEstado = HAL_GetTick();
+}
+
+static void PrepararNivel(void)
+{
+    uint32_t ahora = HAL_GetTick();
+    cantidadEnemigos = (estadoJuego == ESTADO_NIVEL_1) ? 1U : MAX_ENEMIGOS;
+    naveX = NAVE_X_INICIAL;
+    naveY = NAVE_Y_INICIAL;
+    balaJugador = (Proyectil){0};
+    for (uint8_t i = 0; i < MAX_ENEMIGOS; i++)
+    {
+        enemigos[i] = (Enemigo){0};
+        balasEnemigas[i] = (Proyectil){0};
+        if (i < cantidadEnemigos)
+        {
+            Enemigo *e = &enemigos[i];
+            e->vivo = 1;
+            e->direccion = (i == 1U) ? -1 : 1;
+            e->ultimoDisparo = ahora;
+            if (estadoJuego == ESTADO_NIVEL_1)
+            {
+                e->x = ENEMIGO_X_INICIAL;
+                e->y = ENEMIGO_Y_INICIAL;
+                e->limiteIzquierdo = LIMITE_IZQUIERDO;
+                e->limiteDerecho = LIMITE_DERECHO;
+            }
+            else
+            {
+                // Tres zonas separadas evitan que los enemigos se superpongan.
+                e->limiteIzquierdo = 8 + 104 * i;
+                e->limiteDerecho = e->limiteIzquierdo + 80;
+                e->x = e->limiteIzquierdo + 32;
+                e->y = 48;
+            }
+        }
+    }
+    DibujarFondoEstrellas();
+    DibujarContador();
+    DibujarActores();
+    tiempoFrameAnterior = HAL_GetTick();
+    tiempoEstrellasAnterior = tiempoFrameAnterior;
+}
+
+// Devuelve un evento solo al confirmar una pulsacion nueva de B1.
+static uint8_t ActualizarB1(uint32_t ahora)
+{
+    uint8_t lectura = (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == B1_PRESIONADO);
+    if (lectura != botonB1.crudo)
+    {
+        botonB1.crudo = lectura;
+        botonB1.ultimoCambio = ahora;
+    }
+    if (botonB1.estable != botonB1.crudo &&
+        (uint32_t)(ahora - botonB1.ultimoCambio) >= ANTIRREBOTE_MS)
+    {
+        botonB1.estable = botonB1.crudo;
+        return botonB1.estable;
+    }
+    return 0;
+}
+
+static void FSM_Actualizar(void)
+{
+    uint32_t ahora = HAL_GetTick();
+    uint8_t pulsacion = ActualizarB1(ahora);
+    switch (estadoJuego)
+    {
+        case ESTADO_INICIO:
+            Audio_Actualizar();
+            // Exige soltar, pulsar y soltar: evita reinicios por B1 sostenido.
+            if (!botonB1.estable && !botonB1.crudo &&
+                (uint32_t)(ahora - botonB1.ultimoCambio) >= ANTIRREBOTE_MS)
+            {
+                inicioArmado = 1;
+                if (inicioSolicitado)
+                {
+                    FSM_CambiarEstado(ESTADO_NIVEL_1);
+                }
+            }
+            else if (pulsacion && inicioArmado)
+            {
+                inicioSolicitado = 1;
+                if (melodiaEnCurso) Audio_Detener();
+            }
+            break;
+
+        case ESTADO_NIVEL_1:
+        case ESTADO_NIVEL_2:
+            if (pulsacion) disparoPendiente = 1;
+            if ((uint32_t)(ahora - tiempoFrameAnterior) >= FRAME_DELAY_MS)
+            {
+                tiempoFrameAnterior = ahora;
+                ActualizarPartida(ahora);
+            }
+            break;
+
+        case ESTADO_GAMEOVER:
+        case ESTADO_YOU_WIN:
+            Audio_Actualizar();
+            // Conserva el tiempo minimo visible y deja terminar la melodia completa.
+            if (!melodiaEnCurso && (uint32_t)(ahora - tiempoEstado) >= RESULTADO_MS)
+            {
+                FSM_CambiarEstado(ESTADO_INICIO);
+            }
+            break;
+    }
+}
+
+static uint8_t EnemigosVivos(void)
+{
+    uint8_t vivos = 0;
+    for (uint8_t i = 0; i < cantidadEnemigos; i++) vivos += enemigos[i].vivo;
+    return vivos;
+}
+
+static uint8_t Impacta(const Proyectil *p, int x, int y)
+{
+    // La bala ocupa el centro del sprite; sus margenes negros no hacen dano.
+    return p->activa && p->x + 6 * BALA_ESCALA < x + SPRITE_SIZE && p->x + 10 * BALA_ESCALA > x &&
+           p->y + 2 * BALA_ESCALA < y + SPRITE_SIZE && p->y + 14 * BALA_ESCALA > y;
+}
+
+static void BorrarActores(void)
+{
+    RestaurarFondoEstrellas(naveX, naveY, SPRITE_SIZE, SPRITE_SIZE);
+    if (balaJugador.activa)
+        BorrarProyectil(&balaJugador);
+    for (uint8_t i = 0; i < cantidadEnemigos; i++)
+    {
+        if (enemigos[i].vivo)
+            RestaurarFondoEstrellas(enemigos[i].x, enemigos[i].y, SPRITE_SIZE, SPRITE_SIZE);
+        if (balasEnemigas[i].activa)
+            BorrarProyectil(&balasEnemigas[i]);
+    }
+}
+
+static void BorrarProyectil(const Proyectil *p)
+{
+    // Recorta al area de juego cuando parte de la bala queda fuera de pantalla.
+    int x1 = p->x < 0 ? 0 : p->x;
+    int y1 = p->y < MARCADOR_ALTO ? MARCADOR_ALTO : p->y;
+    int x2 = p->x + BALA_TAMANO;
+    int y2 = p->y + BALA_TAMANO;
+    if (x2 > SCREEN_WIDTH) x2 = SCREEN_WIDTH;
+    if (y2 > SCREEN_HEIGHT) y2 = SCREEN_HEIGHT;
+    if (x2 > x1 && y2 > y1)
+        RestaurarFondoEstrellas(x1, y1, x2 - x1, y2 - y1);
+}
+
+static void DibujarProyectil(const Proyectil *p, uint8_t haciaAbajo)
+{
+    if (!p->activa) return;
+    // Un bloque de 512 bytes por bala completa, tambien al invertirla.
+    Pantalla_Bitmap(p->x, p->y, BALA_TAMANO, BALA_TAMANO,
+                    bala, haciaAbajo, MARCADOR_ALTO);
+}
+
+static void DibujarActores(void)
+{
+    Pantalla_Bitmap(naveX, naveY, SPRITE_SIZE, SPRITE_SIZE, nave, 0U, MARCADOR_ALTO);
+    for (uint8_t i = 0; i < cantidadEnemigos; i++)
+    {
+        if (enemigos[i].vivo)
+            Pantalla_Bitmap(enemigos[i].x, enemigos[i].y, SPRITE_SIZE, SPRITE_SIZE, enemigoPec, 0U, MARCADOR_ALTO);
+        DibujarProyectil(&balasEnemigas[i], 1);
+    }
+    DibujarProyectil(&balaJugador, 0);
+}
+
+static void ActualizarPartida(uint32_t ahora)
+{
+    // Borra todas las posiciones anteriores antes de mover o dibujar actores.
+    BorrarActores();
+    int izquierda = HAL_GPIO_ReadPin(BTN_IZQUIERDA_PORT, BTN_IZQUIERDA_PIN) == GPIO_PIN_RESET;
+    int derecha = HAL_GPIO_ReadPin(BTN_DERECHA_PORT, BTN_DERECHA_PIN) == GPIO_PIN_RESET;
+    if (izquierda && !derecha) naveX -= NAVE_VELOCIDAD;
+    if (derecha && !izquierda) naveX += NAVE_VELOCIDAD;
+    if (naveX < LIMITE_IZQUIERDO) naveX = LIMITE_IZQUIERDO;
+    if (naveX > LIMITE_DERECHO) naveX = LIMITE_DERECHO;
+
+    if (disparoPendiente && !balaJugador.activa)
+        balaJugador = (Proyectil){naveX + (SPRITE_SIZE - BALA_TAMANO) / 2, naveY - BALA_TAMANO, 1};
+    disparoPendiente = 0;
+
+    for (uint8_t i = 0; i < cantidadEnemigos; i++)
+    {
+        Enemigo *e = &enemigos[i];
+        if (!e->vivo) continue;
+        e->x += e->direccion * ENEMIGO_VELOCIDAD;
+        if (e->x <= e->limiteIzquierdo)
+        {
+            e->x = e->limiteIzquierdo;
+            e->direccion = 1;
+        }
+        if (e->x >= e->limiteDerecho)
+        {
+            e->x = e->limiteDerecho;
+            e->direccion = -1;
+        }
+    }
+
+    if (balaJugador.activa)
+    {
+        balaJugador.y -= BALA_VELOCIDAD;
+        for (uint8_t i = 0; i < cantidadEnemigos; i++)
+        {
+            if (enemigos[i].vivo && Impacta(&balaJugador, enemigos[i].x, enemigos[i].y))
+            {
+                enemigos[i].vivo = 0;
+                balaJugador.activa = 0;
+                contador++;
+                DibujarContador();
+                break;
+            }
+        }
+        if (balaJugador.y + BALA_TAMANO <= MARCADOR_ALTO) balaJugador.activa = 0;
+    }
+
+    // Solo el nivel 2 dispara. Una bala por enemigo limita la dificultad.
+    if (estadoJuego == ESTADO_NIVEL_2)
+    {
+        for (uint8_t i = 0; i < cantidadEnemigos; i++)
+        {
+            Proyectil *p = &balasEnemigas[i];
+            Enemigo *e = &enemigos[i];
+            if (p->activa)
+            {
+                p->y += BALA_ENEMIGA_VELOCIDAD;
+                if (Impacta(p, naveX, naveY))
+                {
+                    // Un impacto termina la partida, incluso si cae el ultimo enemigo.
+                    FSM_CambiarEstado(ESTADO_GAMEOVER);
+                    return;
+                }
+                if (p->y >= SCREEN_HEIGHT) p->activa = 0;
+            }
+            if (e->vivo && !p->activa &&
+                (uint32_t)(ahora - e->ultimoDisparo) >=
+                DISPARO_ENEMIGO_MS + i * DESFASE_DISPARO_MS)
+            {
+                *p = (Proyectil){e->x + (SPRITE_SIZE - BALA_TAMANO) / 2, e->y + SPRITE_SIZE, 1};
+                e->ultimoDisparo = ahora;
+            }
+        }
+    }
+
+    if (EnemigosVivos() == 0U)
+    {
+        FSM_CambiarEstado(estadoJuego == ESTADO_NIVEL_1 ? ESTADO_NIVEL_2 : ESTADO_YOU_WIN);
+        return;
+    }
+    ActualizarEstrellas();
+    DibujarActores();
 }
 
 /* USER CODE END 0 */
@@ -425,240 +866,26 @@ int main(void)
 
   /* USER CODE BEGIN 2 */
 
-  LCD_Init();
+LCD_Init();
+  ConvertirSpriteRGB565(naveBytes, nave, SPRITE_SIZE * SPRITE_SIZE);
+  ConvertirSpriteRGB565(enemigoSmllBytes, enemigoPec, SPRITE_SIZE * SPRITE_SIZE);
+  ConvertirSpriteRGB565(balaBytes, bala, SPRITE_SIZE * SPRITE_SIZE);
 
-  // Dibuja la imagen una sola vez, antes de esperar B1.
-  DibujarPantallaInicio();
+  botonB1.crudo = (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == B1_PRESIONADO);
+  botonB1.estable = botonB1.crudo;
+  botonB1.ultimoCambio = HAL_GetTick();
+  FSM_CambiarEstado(ESTADO_INICIO);
 
-  // Reproduce la melodia en bucle mientras se consulta B1.
-  Audio_Iniciar();
-
-  while (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) != B1_PRESIONADO)
-  {
-      Audio_Actualizar();
-  }
-
-  // Detiene el sonido inmediatamente al detectar B1.
-  Audio_Detener();
-
-  // Espera una liberacion estable durante 30 ms antes de iniciar el juego.
-  uint32_t inicioLiberacion = HAL_GetTick();
-  while ((uint32_t)(HAL_GetTick() - inicioLiberacion) < 30U)
-  {
-      if (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == B1_PRESIONADO)
-      {
-          inicioLiberacion = HAL_GetTick();
-      }
-  }
-
-  // Borra completamente el menu antes de dibujar el juego.
-  LCD_Clear(COLOR_FONDO);
-  HAL_Delay(20);
-
-  DibujarFondoEstrellas();
-
-  contador = 0;
-  DibujarContador();
-
-  // Los sprites ya estan en horizontal: solo se convierte bytes -> RGB565.
-  ConvertirSpriteRGB565(naveBytes,
-                        nave,
-                        SPRITE_SIZE * SPRITE_SIZE);
-
-  ConvertirSpriteRGB565(enemigoSmllBytes,
-                        enemigoPec,
-                        SPRITE_SIZE * SPRITE_SIZE);
-
-  ConvertirSpriteRGB565(balaBytes,
-                        bala,
-                        SPRITE_SIZE * SPRITE_SIZE);
-
-  LCD_Sprite(naveX,
-             naveY,
-             SPRITE_SIZE,
-             SPRITE_SIZE,
-             nave,
-             1, 0, 0, 0);
-
-  LCD_Sprite(enemigoX,
-             enemigoY,
-             SPRITE_SIZE,
-             SPRITE_SIZE,
-             enemigoPec,
-             1, 0, 0, 0);
-
-  tiempoEstrellasAnterior = HAL_GetTick();
-
-  // Evita que el B1 usado para iniciar se interprete como disparo
-  fireAnterior = 0;
-
-  /* USER CODE END 2 */
+/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  while (1)
+while (1)
   {
-	  int naveXAnterior = naveX;
-	  int enemigoXAnterior = enemigoX;
+      FSM_Actualizar();
 
-	  int balaYAnterior = balaY;
-
-	  int balaEstabaActiva = balaActiva;
-	  int enemigoEstabaVivo = enemigoVivo;
-
-	  int izquierda =
-			  HAL_GPIO_ReadPin(BTN_IZQUIERDA_PORT, BTN_IZQUIERDA_PIN) == GPIO_PIN_RESET;
-
-	  int derecha =
-			  HAL_GPIO_ReadPin(BTN_DERECHA_PORT, BTN_DERECHA_PIN) == GPIO_PIN_RESET;
-
-	  int fire =
-			  HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == B1_PRESIONADO;
-
-	  // Movimiento de la nave (solo horizontal)
-	  if (izquierda && !derecha)
-	  {
-		  naveX -= NAVE_VELOCIDAD;
-	  }
-	  else if (derecha && !izquierda)
-	  {
-		  naveX += NAVE_VELOCIDAD;
-	  }
-
-	  if (naveX < LIMITE_IZQUIERDO)
-	  {
-		  naveX = LIMITE_IZQUIERDO;
-	  }
-
-	  if (naveX > LIMITE_DERECHO)
-	  {
-		  naveX = LIMITE_DERECHO;
-	  }
-
-	  // Disparo por flanco
-	  if (fire && !fireAnterior)
-	  {
-		  Disparar();
-	  }
-
-	  fireAnterior = fire;
-
-	  // Movimiento del enemigo (solo horizontal)
-	  if (enemigoVivo)
-	  {
-		  enemigoX += enemigoDireccion * ENEMIGO_VELOCIDAD;
-
-		  if (enemigoX <= LIMITE_IZQUIERDO)
-		  {
-			  enemigoX = LIMITE_IZQUIERDO;
-			  enemigoDireccion = 1;
-		  }
-
-		  if (enemigoX >= LIMITE_DERECHO)
-		  {
-			  enemigoX = LIMITE_DERECHO;
-			  enemigoDireccion = -1;
-		  }
-	  }
-
-	  // Movimiento de la bala (hacia arriba)
-	  if (balaActiva)
-	  {
-		  balaY -= BALA_VELOCIDAD;
-
-		  if (balaY < MARCADOR_ALTO)
-		  {
-			  balaActiva = 0;
-		  }
-	  }
-
-	  // Colision bala-enemigo
-	  if (ColisionBalaEnemigo())
-	  {
-          // Una baja por impacto; evita desbordar el contador.
-          if (contador < UINT32_MAX)
-          {
-              contador++;
-              DibujarContador();
-          }
-		  balaActiva = 0;
-		  enemigoVivo = 0;
-		  tiempoEnemigoMuerto = HAL_GetTick();
-	  }
-
-	  // Restaura el fondo donde estaban los sprites
-	  if (naveX != naveXAnterior)
-	  {
-		  RestaurarFondoEstrellas(naveXAnterior,
-								  naveY,
-								  SPRITE_SIZE,
-								  SPRITE_SIZE);
-	  }
-
-	  if (enemigoEstabaVivo &&
-		  (!enemigoVivo || enemigoX != enemigoXAnterior))
-	  {
-		  RestaurarFondoEstrellas(enemigoXAnterior,
-								  enemigoY,
-								  SPRITE_SIZE,
-								  SPRITE_SIZE);
-	  }
-
-	  if (balaEstabaActiva)
-	  {
-		  RestaurarFondoEstrellas(balaX,
-								  balaYAnterior,
-								  SPRITE_SIZE,
-								  SPRITE_SIZE);
-	  }
-
-	  // Respawn del enemigo
-	  if (!enemigoVivo &&
-		  (HAL_GetTick() - tiempoEnemigoMuerto >= RESPAWN_ENEMIGO_MS))
-	  {
-		  enemigoX = ENEMIGO_X_INICIAL;
-		  enemigoY = ENEMIGO_Y_INICIAL;
-		  enemigoDireccion = 1;
-		  enemigoVivo = 1;
-	  }
-
-	  // Actualiza el starfield
-	  ActualizarEstrellas();
-
-	  // Redibuja la nave siempre sobre las estrellas
-	  LCD_Sprite(naveX,
-				 naveY,
-				 SPRITE_SIZE,
-				 SPRITE_SIZE,
-				 nave,
-				 1, 0, 0, 0);
-
-	  // Redibuja el enemigo
-	  if (enemigoVivo)
-	  {
-		  LCD_Sprite(enemigoX,
-					 enemigoY,
-					 SPRITE_SIZE,
-					 SPRITE_SIZE,
-					 enemigoPec,
-					 1, 0, 0, 0);
-	  }
-
-	  // Redibuja la bala
-	  if (balaActiva)
-	  {
-		  LCD_Sprite(balaX,
-					 balaY,
-					 SPRITE_SIZE,
-					 SPRITE_SIZE,
-					 bala,
-					 1, 0, 0, 0);
-	  }
-
-	  HAL_Delay(FRAME_DELAY_MS);
-
-    /* USER CODE END WHILE */
+/* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }

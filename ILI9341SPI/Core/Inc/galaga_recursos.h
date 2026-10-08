@@ -38,4 +38,10 @@ extern uint16_t nave[GALAGA_SPRITE_LADO * GALAGA_SPRITE_LADO];
 extern uint16_t enemigoPec[GALAGA_SPRITE_LADO * GALAGA_SPRITE_LADO];
 extern uint16_t bala[GALAGA_SPRITE_LADO * GALAGA_SPRITE_LADO];
 
+// Melodias de resultado: se reproducen una sola vez.
+#define CANTIDAD_NOTAS_GAMEOVER 17
+extern const NotaGalaga melodiaGameOver[CANTIDAD_NOTAS_GAMEOVER];
+#define CANTIDAD_NOTAS_VICTORIA 9
+extern const NotaGalaga melodiaVictoria[CANTIDAD_NOTAS_VICTORIA];
+
 #endif
