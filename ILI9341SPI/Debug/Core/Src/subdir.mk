@@ -7,6 +7,8 @@
 C_SRCS += \
 ../Core/Src/fatfs_sd.c \
 ../Core/Src/font.c \
+../Core/Src/galaga_juego.c \
+../Core/Src/galaga_pantalla.c \
 ../Core/Src/galaga_recursos.c \
 ../Core/Src/graficos.c \
 ../Core/Src/ili9341.c \
@@ -21,6 +23,8 @@ C_SRCS += \
 OBJS += \
 ./Core/Src/fatfs_sd.o \
 ./Core/Src/font.o \
+./Core/Src/galaga_juego.o \
+./Core/Src/galaga_pantalla.o \
 ./Core/Src/galaga_recursos.o \
 ./Core/Src/graficos.o \
 ./Core/Src/ili9341.o \
@@ -35,6 +39,8 @@ OBJS += \
 C_DEPS += \
 ./Core/Src/fatfs_sd.d \
 ./Core/Src/font.d \
+./Core/Src/galaga_juego.d \
+./Core/Src/galaga_pantalla.d \
 ./Core/Src/galaga_recursos.d \
 ./Core/Src/graficos.d \
 ./Core/Src/ili9341.d \
@@ -54,7 +60,7 @@ Core/Src/%.o Core/Src/%.su Core/Src/%.cyclo: ../Core/Src/%.c Core/Src/subdir.mk
 clean: clean-Core-2f-Src
 
 clean-Core-2f-Src:
-	-$(RM) ./Core/Src/fatfs_sd.cyclo ./Core/Src/fatfs_sd.d ./Core/Src/fatfs_sd.o ./Core/Src/fatfs_sd.su ./Core/Src/font.cyclo ./Core/Src/font.d ./Core/Src/font.o ./Core/Src/font.su ./Core/Src/galaga_recursos.cyclo ./Core/Src/galaga_recursos.d ./Core/Src/galaga_recursos.o ./Core/Src/galaga_recursos.su ./Core/Src/graficos.cyclo ./Core/Src/graficos.d ./Core/Src/graficos.o ./Core/Src/graficos.su ./Core/Src/ili9341.cyclo ./Core/Src/ili9341.d ./Core/Src/ili9341.o ./Core/Src/ili9341.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/musica_inicio.cyclo ./Core/Src/musica_inicio.d ./Core/Src/musica_inicio.o ./Core/Src/musica_inicio.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su
+	-$(RM) ./Core/Src/fatfs_sd.cyclo ./Core/Src/fatfs_sd.d ./Core/Src/fatfs_sd.o ./Core/Src/fatfs_sd.su ./Core/Src/font.cyclo ./Core/Src/font.d ./Core/Src/font.o ./Core/Src/font.su ./Core/Src/galaga_juego.cyclo ./Core/Src/galaga_juego.d ./Core/Src/galaga_juego.o ./Core/Src/galaga_juego.su ./Core/Src/galaga_pantalla.cyclo ./Core/Src/galaga_pantalla.d ./Core/Src/galaga_pantalla.o ./Core/Src/galaga_pantalla.su ./Core/Src/galaga_recursos.cyclo ./Core/Src/galaga_recursos.d ./Core/Src/galaga_recursos.o ./Core/Src/galaga_recursos.su ./Core/Src/graficos.cyclo ./Core/Src/graficos.d ./Core/Src/graficos.o ./Core/Src/graficos.su ./Core/Src/ili9341.cyclo ./Core/Src/ili9341.d ./Core/Src/ili9341.o ./Core/Src/ili9341.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/musica_inicio.cyclo ./Core/Src/musica_inicio.d ./Core/Src/musica_inicio.o ./Core/Src/musica_inicio.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su
 
 .PHONY: clean-Core-2f-Src
 

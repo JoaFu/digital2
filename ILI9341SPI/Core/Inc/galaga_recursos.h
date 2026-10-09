@@ -3,6 +3,19 @@
 
 #include <stdint.h>
 
+/* Sprites importados como RGB565 uint16_t, byte alto primero.
+   Negro (0x0000) es transparente; los otros colores se preservan. */
+#define GALAGA_SPRITES_NUEVOS 1
+#define GALAGA_SPRITE_RAYO 1
+#if GALAGA_SPRITES_NUEVOS
+extern const uint16_t enemigo_amarillo[16 * 16];
+extern const uint16_t enemigo_verde[16 * 16];
+extern const uint16_t enemigo_boss[16 * 16];
+#endif
+#if GALAGA_SPRITE_RAYO
+extern const uint16_t rayo_azul[48 * 80];
+#endif
+
 // Dimensiones y cantidades de los recursos del juego.
 #define GALAGA_PANTALLA_ANCHO 320
 #define GALAGA_PANTALLA_ALTO  240

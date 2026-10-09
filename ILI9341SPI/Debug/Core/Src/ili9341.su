@@ -7,7 +7,7 @@
 ../Core/Src/ili9341.c:230:6:V_line	32	static
 ../Core/Src/ili9341.c:250:6:Rect	24	static
 ../Core/Src/ili9341.c:260:6:FillRect	40	static
-../Core/Src/ili9341.c:285:6:LCD_Print	104	dynamic
-../Core/Src/ili9341.c:350:6:LCD_Bitmap	40	static
-../Core/Src/ili9341.c:373:6:LCD_BitmapTransparent	40	static
-../Core/Src/ili9341.c:396:6:LCD_Sprite	64	static
+../Core/Src/ili9341.c:285:6:LCD_Print	584	static
+../Core/Src/ili9341.c:312:6:LCD_Bitmap	40	static
+../Core/Src/ili9341.c:335:6:LCD_BitmapTransparent	40	static
+../Core/Src/ili9341.c:358:6:LCD_Sprite	64	static

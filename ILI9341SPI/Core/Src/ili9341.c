@@ -282,67 +282,29 @@ void FillRect(unsigned int x, unsigned int y, unsigned int w, unsigned int h,
 //***************************************************************************************************************************************
 // Función para dibujar texto - parámetros ( texto, coordenada x, cordenada y, color, background)
 //***************************************************************************************************************************************
-void LCD_Print(char *text, int x, int y, int fontSize, int color,
-		int background) {
-
-	int fontXSize;
-	int fontYSize;
-
-	if (fontSize == 1) {
-		fontXSize = fontXSizeSmal;
-		fontYSize = fontYSizeSmal;
-	}
-	if (fontSize == 2) {
-		fontXSize = fontXSizeBig;
-		fontYSize = fontYSizeBig;
-	}
-	if (fontSize == 3) {
-		fontXSize = fontXSizeNum;
-		fontYSize = fontYSizeNum;
-	}
-
-	char charInput;
-	int cLength = strlen(text);
-	int charDec;
-	int c;
-	//int charHex;
-	char char_array[cLength + 1];
-	for (int i = 0; text[i] != '\0'; i++) {
-		char_array[i] = text[i];
-	}
-
-	//text.toCharArray(char_array, cLength + 1);
-
-	for (int i = 0; i < cLength; i++) {
-		charInput = char_array[i];
-		charDec = (int) charInput;
-		//HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_RESET);
-		LCD_CS_L();
-		SetWindows(x + (i * fontXSize), y, x + (i * fontXSize) + fontXSize - 1,
-				y + fontYSize);
-		long charHex1;
-		for (int n = 0; n < fontYSize; n++) {
-			if (fontSize == 1) {
-				charHex1 = pgm_read_word_near(
-						smallFont + ((charDec - 32) * fontYSize) + n);
-			}
-			if (fontSize == 2) {
-				charHex1 = pgm_read_word_near(
-						bigFont + ((charDec - 32) * fontYSize) + n);
-			}
-			for (int t = 1; t < fontXSize + 1; t++) {
-				if ((charHex1 & (1 << (fontXSize - t))) > 0) {
-					c = color;
-				} else {
-					c = background;
-				}
-				LCD_DATA(c >> 8);
-				LCD_DATA(c);
-			}
-		}
-		//HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET);
-		LCD_CS_H();
-	}
+void LCD_Print(char *text, int x, int y, int fontSize, int color, int background) {
+    int w=fontSize==2?fontXSizeBig:fontXSizeSmal;
+    int h=fontSize==2?fontYSizeBig:fontYSizeSmal;
+    uint8_t pixels[16*16*2];
+    if(fontSize!=1 && fontSize!=2) return;
+    for(int k=0;text[k];++k) {
+        unsigned ch=(unsigned char)text[k];
+        if(ch<32 || ch>=127) ch='?';
+        int xx=x+k*w;
+        if(xx<0 || y<0 || xx+w>320 || y+h>240) continue;
+        for(int row=0;row<h;++row) {
+            uint16_t bits=fontSize==2?bigFont[(ch-32)*h+row]:smallFont[(ch-32)*h+row];
+            for(int col=0;col<w;++col) {
+                uint16_t c=(bits&(1U<<(w-col-1)))?(uint16_t)color:(uint16_t)background;
+                int at=2*(row*w+col); pixels[at]=(uint8_t)(c>>8); pixels[at+1]=(uint8_t)c;
+            }
+        }
+        SetWindows(xx,y,xx+w-1,y+h-1);
+        LCD_CS_L(); LCD_DC_H();
+        HAL_StatusTypeDef status=HAL_SPI_Transmit(&hspi1,pixels,(uint16_t)(w*h*2),100U);
+        LCD_CS_H();
+        if(status!=HAL_OK) Error_Handler();
+    }
 }
 //***************************************************************************************************************************************
 // Función para dibujar una imagen a partir de un arreglo de colores (Bitmap) Formato (Color 16bit R 5bits G 6bits B 5bits)
