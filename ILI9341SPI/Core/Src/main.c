@@ -200,7 +200,7 @@ static void UI_Entrar(EstadoUI nuevo)
     else if(nuevo==UI_MENU) { GP_Menu(nivelSeleccionado); if(!melodiaEnCurso) Audio_Iniciar(); }
     else if(nuevo==UI_JUEGO) {
         if(melodiaEnCurso) Audio_Detener();
-        G_Iniciar(&juego,nivelSeleccionado); GP_PrepararJuego(); GP_Dibujar(&juego);
+        G_Iniciar(&juego,nivelSeleccionado); GP_PrepararJuego(); GP_Dibujar(&juego); GP_Esperar();
         tiempoPaso=HAL_GetTick();
     } else {
         if(melodiaEnCurso) Audio_Detener();
@@ -212,6 +212,7 @@ static void UI_Entrar(EstadoUI nuevo)
 }
 static void UI_Actualizar(void)
 {
+    GP_Servicio();
     uint32_t ahora=HAL_GetTick();
     uint8_t b1=Boton_Actualizar(&botonB1,B1_GPIO_Port,B1_Pin,ahora);
     uint8_t izq=Boton_Actualizar(&botonIzq,BTN_UP_GPIO_Port,BTN_UP_Pin,ahora);

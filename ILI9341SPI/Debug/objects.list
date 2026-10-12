@@ -1,5 +1,6 @@
 "./Core/Src/fatfs_sd.o"
 "./Core/Src/font.o"
+"./Core/Src/galaga_dma.o"
 "./Core/Src/galaga_juego.o"
 "./Core/Src/galaga_pantalla.o"
 "./Core/Src/galaga_recursos.o"

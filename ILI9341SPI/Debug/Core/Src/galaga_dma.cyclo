@@ -1,0 +1,8 @@
+../Core/Src/galaga_dma.c:9:6:GD_Iniciar	2
+../Core/Src/galaga_dma.c:33:6:GD_Enviar	5
+../Core/Src/galaga_dma.c:44:9:GD_Ocupado	4
+../Core/Src/galaga_dma.c:52:6:GD_Esperar	2
+../Core/Src/galaga_dma.c:53:6:HAL_SPI_TxCpltCallback	2
+../Core/Src/galaga_dma.c:59:6:HAL_SPI_ErrorCallback	2
+../Core/Src/galaga_dma.c:63:6:DMA2_Stream3_IRQHandler	1
+../Core/Src/galaga_dma.c:64:6:SPI1_IRQHandler	1

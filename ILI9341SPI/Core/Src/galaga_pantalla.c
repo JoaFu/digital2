@@ -1,5 +1,6 @@
 #include "galaga_pantalla.h"
 #include "main.h"
+#include "galaga_dma.h"
 #include "ili9341.h"
 #include "galaga_recursos.h"
 #include <string.h>
@@ -7,8 +8,15 @@
 
 extern SPI_HandleTypeDef hspi1;
 volatile uint32_t galagaDibujoMs, galagaBytesFrame, galagaFrameMaxMs;
-/* 10 KB, no framebuffer de 150 KB. Una franja se compone y transmite de una vez. */
-static uint16_t franja[G_ANCHO*16];
+/* Dos franjas: DMA lee una mientras la CPU compone la otra. */
+static uint16_t buffers[2][G_ANCHO*16] __attribute__((aligned(4)));
+static uint16_t *franja=buffers[0];
+static GJuego foto;
+static uint32_t pendientes[14],inicioCuadro;
+static uint8_t cuadroActivo,listo,indicePreparar;
+static int filaDMA,columnaDMA;
+static int listoX,listoY,listoW,listoH;
+static void componer(const GJuego *g);
 static uint32_t sucio[14];
 static int rx,ry,rw,rh;
 static uint32_t relojEstrellas;
@@ -25,7 +33,7 @@ static void comando(uint8_t c) {
     HAL_GPIO_WritePin(LCD_DC_GPIO_Port,LCD_DC_Pin,GPIO_PIN_RESET); enviar(&c,1);
     HAL_GPIO_WritePin(LCD_DC_GPIO_Port,LCD_DC_Pin,GPIO_PIN_SET);
 }
-static void transmitir(int x,int y,int w,int h) {
+static void abrirVentana(int x,int y,int w,int h) {
     uint8_t limites[4];
     HAL_GPIO_WritePin(LCD_CS_GPIO_Port,LCD_CS_Pin,GPIO_PIN_RESET);
     comando(0x2A);
@@ -35,13 +43,16 @@ static void transmitir(int x,int y,int w,int h) {
     limites[0]=(uint8_t)(y>>8); limites[1]=(uint8_t)y;
     limites[2]=(uint8_t)((y+h-1)>>8); limites[3]=(uint8_t)(y+h-1); enviar(limites,4);
     comando(0x2C);
+}
+static void transmitir(int x,int y,int w,int h) {
+    abrirVentana(x,y,w,h);
     for(int i=0;i<w*h;++i) franja[i]=(uint16_t)((franja[i]<<8)|(franja[i]>>8));
     enviar(franja,(unsigned)(w*h*2));
     HAL_GPIO_WritePin(LCD_CS_GPIO_Port,LCD_CS_Pin,GPIO_PIN_SET);
 }
 static void limpiar(void) {
     for(int y=0;y<G_ALTO;y+=16) {
-        memset(franja,0,sizeof(franja)); transmitir(0,y,G_ANCHO,16);
+        memset(franja,0,sizeof(buffers[0])); transmitir(0,y,G_ANCHO,16);
     }
 }
 static void texto(const char *s,int x,int y,int grande,uint16_t color) {
@@ -98,6 +109,7 @@ static const uint16_t *imagen(unsigned tipo) {
     return tipo==G_CLASICO || tipo==G_CRUCE ? enemigoPec : 0;
 }
 void GP_Iniciar(void) {
+    GD_Iniciar();
     for(int i=0;i<256;++i) {
         nave[i]=(uint16_t)((naveBytes[2*i]<<8)|naveBytes[2*i+1]);
         enemigoPec[i]=(uint16_t)((enemigoSmllBytes[2*i]<<8)|enemigoSmllBytes[2*i+1]);
@@ -105,12 +117,14 @@ void GP_Iniciar(void) {
     }
 }
 void GP_Portada(void) {
+    GP_Esperar(); franja=buffers[0];
     for(int y=0;y<G_ALTO;y+=16) {
-        memcpy(franja,pantallaInicio+y*G_ANCHO,sizeof(franja)); transmitir(0,y,G_ANCHO,16);
+        memcpy(franja,pantallaInicio+y*G_ANCHO,sizeof(buffers[0])); transmitir(0,y,G_ANCHO,16);
     }
     texto("B1: ELEGIR NIVEL",96,220,1,0xFFFF);
 }
 void GP_Menu(uint8_t seleccionado) {
+    GP_Esperar(); franja=buffers[0];
     limpiar(); texto("ELIGE NIVEL",72,26,2,0x07FF);
     const char *opciones[]={"1  PRIMER CONTACTO","2  ESCUADRONES","3  EL JEFE"};
     for(unsigned i=0;i<3;++i) {
@@ -121,10 +135,12 @@ void GP_Menu(uint8_t seleccionado) {
     texto("IZQ/DER: CAMBIAR  B1: JUGAR",48,208,1,0xFFFF);
 }
 void GP_Resultado(uint8_t victoria) {
+    GP_Esperar(); franja=buffers[0];
     limpiar(); texto(victoria?"YOU WIN":"GAME OVER",victoria?104:88,92,2,victoria?0x07E0:0xF800);
     texto("VOLVIENDO A ELEGIR NIVEL",64,144,1,0xFFFF);
 }
 void GP_PrepararJuego(void) {
+    GP_Esperar(); franja=buffers[0];
     limpiar();
     for(unsigned i=0;i<14;++i) sucio[i]=0xFFFFFU;
     hudBajas=hudLento=hudFase=hudHP=-1; relojEstrellas=0;
@@ -186,7 +202,10 @@ static void componer(const GJuego *g) {
     }
 }
 void GP_Dibujar(const GJuego *g) {
-    uint32_t inicio=HAL_GetTick(); galagaBytesFrame=0;
+    /* Acumular cambios aunque aun se este mostrando la foto anterior. */
+    GP_Marcar(g);
+    if(cuadroActivo) return;
+    inicioCuadro=HAL_GetTick(); galagaBytesFrame=0;
     if((uint32_t)(g->tiempo-relojEstrellas)>=100U) {
         relojEstrellas=g->tiempo;
         for(unsigned i=0;i<CANTIDAD_ESTRELLAS;++i) {
@@ -197,18 +216,8 @@ void GP_Dibujar(const GJuego *g) {
         }
     }
     GP_Marcar(g);
-    for(int fila=0;fila<14;++fila) {
-        int columna=0;
-        while(columna<20) {
-            if(!(sucio[fila]&(1UL<<columna))) { ++columna; continue; }
-            int primera=columna;
-            while(columna<20 && (sucio[fila]&(1UL<<columna))) ++columna;
-            rx=primera*16; ry=G_HUD+fila*16; rw=(columna-primera)*16;
-            rh=ry+16>G_ALTO?G_ALTO-ry:16;
-            componer(g); transmitir(rx,ry,rw,rh);
-        }
-        sucio[fila]=0;
-    }
+    foto=*g;
+    memcpy(pendientes,sucio,sizeof(sucio)); memset(sucio,0,sizeof(sucio));
     int hp=0;
     for(unsigned i=0;i<G_ENEMIGOS;++i)
         if(g->enemigos[i].activo && g->enemigos[i].tipo==G_BOSS) hp=g->enemigos[i].hp;
@@ -231,6 +240,39 @@ void GP_Dibujar(const GJuego *g) {
         }
         hudBajas=g->bajas; hudLento=g->lento; hudFase=g->fase; hudHP=hp;
     }
-    galagaDibujoMs=HAL_GetTick()-inicio;
-    if(galagaDibujoMs>galagaFrameMaxMs) galagaFrameMaxMs=galagaDibujoMs;
+    filaDMA=columnaDMA=0; listo=0; indicePreparar=0; cuadroActivo=1;
+    GP_Servicio();
+}
+uint8_t GP_Ocupado(void) {return cuadroActivo;}
+void GP_Servicio(void) {
+    if(!cuadroActivo)return;
+    uint8_t ocupado=GD_Ocupado();
+    if(!ocupado && listo) {
+        abrirVentana(listoX,listoY,listoW,listoH);
+        GD_Enviar((const uint8_t *)buffers[indicePreparar],(uint16_t)(listoW*listoH*2));
+        galagaBytesFrame+=(uint32_t)(listoW*listoH*2);
+        indicePreparar^=1U; listo=0; ocupado=1;
+    }
+    if(listo)return;
+    /* Preparar como maximo una region por llamada para atender botones y logica. */
+    while(filaDMA<14) {
+        while(columnaDMA<20 && !(pendientes[filaDMA]&(1UL<<columnaDMA))) ++columnaDMA;
+        if(columnaDMA==20) {++filaDMA;columnaDMA=0;continue;}
+        int primera=columnaDMA;
+        while(columnaDMA<20 && (pendientes[filaDMA]&(1UL<<columnaDMA))) ++columnaDMA;
+        rx=primera*16;ry=G_HUD+filaDMA*16;rw=(columnaDMA-primera)*16;
+        rh=ry+16>G_ALTO?G_ALTO-ry:16;
+        franja=buffers[indicePreparar]; componer(&foto);
+        for(int i=0;i<rw*rh;++i)franja[i]=(uint16_t)((franja[i]<<8)|(franja[i]>>8));
+        listoX=rx;listoY=ry;listoW=rw;listoH=rh;listo=1;
+        return;
+    }
+    if(!ocupado) {
+        cuadroActivo=0;
+        galagaDibujoMs=HAL_GetTick()-inicioCuadro;
+        if(galagaDibujoMs>galagaFrameMaxMs)galagaFrameMaxMs=galagaDibujoMs;
+    }
+}
+void GP_Esperar(void) {
+    while(cuadroActivo) {GP_Servicio(); GD_Esperar();}
 }
