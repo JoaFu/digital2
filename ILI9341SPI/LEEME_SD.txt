@@ -1,0 +1,82 @@
+GALAGA: SD Y RECORDS POR NIVEL
+
+Base: commit 592cd214676db091be972440d7977a6836950888.
+Integracion realizada sin abrir CubeMX, compilar, ejecutar firmware ni acceder
+a la tarjeta conectada al PC. Debe validarse posteriormente en la placa.
+
+Hardware conservado:
+ILI9341: SPI1 con DMA propio (galaga_dma.c).
+Control: ESP32 GPIO17 a PA10 USART1 RX, 115200 8N1.
+USART2 conserva su configuracion para ST-LINK.
+SD: PB13 SCK, PB14 MISO, PB15 MOSI, PB12 CS (inicialmente alto).
+SPI2: modo 0, 8 bits, CS por software; 164 kHz al iniciar, 5.25 MHz despues.
+El controlador admite SD v2 (incluida SDHC de 32 GB); no implementa MMC/SD v1.
+
+RECORDS
+Se lee la SD al arrancar. El menu muestra el mejor tiempo del nivel seleccionado.
+El reloj usa HAL_GetTick desde el primer cuadro preparado hasta que empieza
+la celebracion final; excluye los 500 ms de celebracion y el guardado.
+La precision de deteccion depende del paso del juego; no es un cronometro de
+precision aunque se almacenen milisegundos. La logica del juego no se modifica.
+Solo una victoria que mejore el tiempo escribe; empate o derrota no escriben.
+El anuncio de nuevo record exige escritura completa, sincronizacion, cierre,
+remontaje y lectura de comprobacion desde el medio.
+
+SIN SD / ERROR
+El juego continua. No crea records temporales en RAM y no reintenta guardar
+durante esa sesion. Se invalidan las marcas cargadas al detectar el error.
+Para volver a habilitar records, corregir la SD y reiniciar la consola.
+Se comprueba la respuesta de la tarjeta al entrar al menu y al guardar.
+No hay pin de deteccion; retirar la SD se descubre al siguiente acceso.
+Las operaciones ocurren al arrancar, en menu o al finalizar, nunca en G_Paso
+ni dentro de interrupciones. Pueden introducir una espera fuera de la partida:
+limite global de 4 s para carga/guardado y 1 s para comprobacion; cada llamada
+HAL SPI tiene limite de 20 ms, con un pequeno margen de salida de la funcion.
+
+FORMATO
+GALAGA0.DAT y GALAGA1.DAT en la raiz, nombres 8.3.
+28 bytes: firma GLG1 (4), version=1 (uint32), secuencia (uint32),
+tiempos de niveles 1/2/3 (3 uint32), CRC32 IEEE de los primeros 24 bytes.
+Enteros little-endian; tiempo cero significa sin marca.
+Se escribe la ranura alterna y se conserva la anterior. Al arrancar se elige
+la copia valida mas reciente. Si ambas faltan, se admite el primer record;
+si hay corrupcion sin ninguna copia valida, se deshabilitan records sin borrar.
+Esto reduce el riesgo de perder el ultimo dato, pero FAT32 no es transaccional:
+un corte durante una escritura tambien puede afectar metadatos compartidos.
+No se formatea ni se modifica ningun archivo ajeno a esos dos nombres.
+
+INTEGRACION Y CUBEMX
+FatFs R0.12c de STM32Cube_FW_F4_V1.28.3, conservando avisos de licencia.
+ff.c en Core/Src; ff.h, integer.h, diskio.h y ffconf.h en Core/Inc.
+Se usan las rutas ya existentes de Debug y Release; no se editaron makefiles.
+Configuracion: una unidad, sectores 512, nombres cortos ASCII, buffer tiny,
+sin heap, RTOS, RTC, exFAT, formateo ni busqueda de espacio libre.
+Las fechas FAT son fijas (01/01/2026) porque no existe RTC para archivos.
+fatfs_sd.c proporciona disk_initialize/status/read/write/ioctl directamente.
+No agregar otra implementacion diskio ni activar una segunda instancia FatFs.
+
+IOC actualizado: SPI2, PB12 alto, USART1 solo RX, TIM3 PSC=83/ARR=999/Pulse=0,
+prioridades por grupo 4. USART1 pasa de funcion manual a MX_USART1_UART_Init,
+con el mismo baudrate, pin, pull-up y callbacks del control. Su IRQ queda fuera
+de USER CODE 1 para evitar duplicacion al regenerar.
+Las nuevas regiones USER CODE corresponden a los perifericos agregados;
+se conservaron las regiones anteriores. DMA de SPI1 sigue en galaga_dma.c.
+FatFs queda integrado manualmente y documentado en comentarios del IOC para
+evitar que una futura generacion cree un segundo controlador de la unidad 0.
+El IOC se reviso como texto, no mediante apertura o regeneracion en CubeMX.
+
+DIAGNOSTICO EN DEBUGGER
+galagaSDError: 0 sin error; 1 plazo global; 2 HAL SPI; 3 protocolo/tarjeta.
+galagaRecordError: codigo FRESULT; 100 archivos invalidos sin copia recuperable;
+101 fallo al verificar el guardado. Una SD llena deshabilita records.
+
+VALIDACION PENDIENTE EN PLACA (no ejecutada)
+Arranque con/sin SD; victoria y reinicio para cada nivel; tiempo mas lento;
+empate y derrota; retiro de SD antes de guardar; SD llena; archivo corrupto
+con/sin segunda copia valida. Confirmar que audio, pantalla y control siguen
+funcionando. No retirar alimentacion mientras se guarda como prueba ordinaria.
+
+Referencias tecnicas:
+https://elm-chan.org/fsw/ff/doc/appnote.html
+https://elm-chan.org/docs/mmc/mmc_e.html
+La configuracion/API usada corresponde a R0.12c instalada, no a R0.16 actual.

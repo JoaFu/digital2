@@ -5,6 +5,7 @@ void GP_Iniciar(void);
 void GP_Portada(void);
 void GP_Menu(uint8_t seleccionado);
 void GP_Resultado(uint8_t victoria);
+void GP_RecordResultado(uint8_t victoria, uint32_t tiempo, uint8_t nuevo);
 void GP_PrepararJuego(void);
 void GP_Marcar(const GJuego *g);
 void GP_Dibujar(const GJuego *g);

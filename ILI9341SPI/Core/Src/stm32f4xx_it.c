@@ -227,11 +227,15 @@ void USART2_IRQHandler(void)
 }
 
 
-/* USER CODE BEGIN 1 */
 extern UART_HandleTypeDef huart1;
 
 void USART1_IRQHandler(void)
 {
-    HAL_UART_IRQHandler(&huart1);
+  /* USER CODE BEGIN USART1_IRQn 0 */
+  /* USER CODE END USART1_IRQn 0 */
+  HAL_UART_IRQHandler(&huart1);
+  /* USER CODE BEGIN USART1_IRQn 1 */
+  /* USER CODE END USART1_IRQn 1 */
 }
+/* USER CODE BEGIN 1 */
 /* USER CODE END 1 */

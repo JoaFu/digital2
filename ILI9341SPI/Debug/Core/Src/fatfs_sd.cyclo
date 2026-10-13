@@ -1,0 +1,15 @@
+../Core/Src/fatfs_sd.c:12:6:SD_Operacion	1
+../Core/Src/fatfs_sd.c:15:16:vigente	3
+../Core/Src/fatfs_sd.c:22:16:transferir	3
+../Core/Src/fatfs_sd.c:29:16:byte	1
+../Core/Src/fatfs_sd.c:33:13:soltar	1
+../Core/Src/fatfs_sd.c:37:16:esperar	5
+../Core/Src/fatfs_sd.c:45:16:comando	9
+../Core/Src/fatfs_sd.c:62:16:error	2
+../Core/Src/fatfs_sd.c:67:16:velocidad	2
+../Core/Src/fatfs_sd.c:74:9:disk_status	2
+../Core/Src/fatfs_sd.c:77:9:disk_initialize	27
+../Core/Src/fatfs_sd.c:113:16:recibir	8
+../Core/Src/fatfs_sd.c:126:9:disk_read	11
+../Core/Src/fatfs_sd.c:136:9:disk_write	17
+../Core/Src/fatfs_sd.c:155:9:disk_ioctl	9

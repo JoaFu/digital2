@@ -1,0 +1,10 @@
+../Core/Src/galaga_records.c:15:17:leer32	16	static
+../Core/Src/galaga_records.c:18:13:poner32	24	static
+../Core/Src/galaga_records.c:21:17:crc	24	static
+../Core/Src/galaga_records.c:29:13:deshabilitar	16	static
+../Core/Src/galaga_records.c:35:12:cargar	32	static
+../Core/Src/galaga_records.c:50:6:GR_Iniciar	96	static
+../Core/Src/galaga_records.c:72:6:GR_Comprobar	8	static
+../Core/Src/galaga_records.c:77:9:GR_Disponible	4	static
+../Core/Src/galaga_records.c:78:10:GR_Mejor	16	static
+../Core/Src/galaga_records.c:81:9:GR_GuardarVictoria	104	static

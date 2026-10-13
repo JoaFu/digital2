@@ -1,0 +1,10 @@
+../Core/Src/galaga_records.c:15:17:leer32	1
+../Core/Src/galaga_records.c:18:13:poner32	2
+../Core/Src/galaga_records.c:21:17:crc	4
+../Core/Src/galaga_records.c:29:13:deshabilitar	1
+../Core/Src/galaga_records.c:35:12:cargar	11
+../Core/Src/galaga_records.c:50:6:GR_Iniciar	14
+../Core/Src/galaga_records.c:72:6:GR_Comprobar	3
+../Core/Src/galaga_records.c:77:9:GR_Disponible	1
+../Core/Src/galaga_records.c:78:10:GR_Mejor	4
+../Core/Src/galaga_records.c:81:9:GR_GuardarVictoria	20

@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "galaga_records.h"
 #include "galaga_recursos.h"
 #include "galaga_juego.h"
 #include "galaga_pantalla.h"
@@ -78,6 +79,7 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi2;
 
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim7;
@@ -86,6 +88,10 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+// Tiempo real de partida, congelado al comenzar la celebracion.
+static uint32_t inicioPartida, duracionVictoria;
+static uint8_t tiempoCongelado;
+
 
 /* --- Juego e interfaz --- */
 static GJuego    juego;
@@ -126,6 +132,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_SPI2_Init(void);
+static void MX_USART1_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
@@ -140,7 +148,7 @@ static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t
 /* Control por UART */
 static void Control_Iniciar(void);
 static void Control_ProcesarByte(uint8_t dato);
-static void USART1_Manual_Init(void);
+
 /* Botones e interfaz */
 static uint8_t Boton_Actualizar(BotonFiltrado *b, GPIO_TypeDef *puerto, uint16_t pin, uint32_t ahora);
 static void UI_Entrar(EstadoUI nuevo);
@@ -346,36 +354,6 @@ static void Control_ProcesarByte(uint8_t dato)
     }
 }
 
-static void USART1_Manual_Init(void)
-{
-    __HAL_RCC_USART1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    // PA10 como USART1_RX, funcion alternativa AF7
-    GPIO_InitStruct.Pin = GPIO_PIN_10;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    huart1.Instance = USART1;
-    huart1.Init.BaudRate = 115200;
-    huart1.Init.WordLength = UART_WORDLENGTH_8B;
-    huart1.Init.StopBits = UART_STOPBITS_1;
-    huart1.Init.Parity = UART_PARITY_NONE;
-    huart1.Init.Mode = UART_MODE_RX;
-    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-
-    if (HAL_UART_Init(&huart1) != HAL_OK)
-    {
-        Error_Handler();
-    }
-}
 
 /* ==========================================================================
  *  BOTONES
@@ -430,6 +408,7 @@ static void UI_Entrar(EstadoUI nuevo)
     }
     else if (nuevo == UI_MENU)
     {
+        GR_Comprobar();
         GP_Menu(nivelSeleccionado);
         if (!melodiaEnCurso) Audio_Iniciar();
     }
@@ -443,12 +422,21 @@ static void UI_Entrar(EstadoUI nuevo)
         GP_Esperar();
 
         tiempoPaso = HAL_GetTick();
+        inicioPartida = tiempoPaso;
+        duracionVictoria = 0;
+        tiempoCongelado = 0;
     }
     else    /* UI_RESULTADO */
     {
         if (melodiaEnCurso) Audio_Detener();
 
+        // Esperar el ultimo dibujo y guardar antes de iniciar la melodia.
+        GP_Esperar();
+        uint8_t nuevoRecord = 0;
+        if (juego.resultado == G_VICTORIA && tiempoCongelado)
+            nuevoRecord = GR_GuardarVictoria(juego.nivel, duracionVictoria);
         GP_Resultado(juego.resultado == G_VICTORIA);
+        GP_RecordResultado(juego.resultado == G_VICTORIA, duracionVictoria, nuevoRecord);
 
         if (juego.resultado == G_VICTORIA)
             Audio_Reproducir(melodiaVictoria, CANTIDAD_NOTAS_VICTORIA, 0);
@@ -570,6 +558,12 @@ static void UI_Actualizar(void)
 
             disparoPendiente = 0U;
             G_Paso(&juego, entrada);
+            // Eliminar la ultima amenaza congela el reloj antes del confeti final.
+            if (!tiempoCongelado && juego.celebracion)
+            {
+                duracionVictoria = HAL_GetTick() - inicioPartida;
+                tiempoCongelado = 1;
+            }
             tiempoPaso += G_PASO_MS;
 
             if (juego.resultado != G_JUGANDO)
@@ -621,6 +615,8 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
+  MX_SPI2_Init();
+  MX_USART1_UART_Init();
   MX_TIM3_Init();
   MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
@@ -637,7 +633,7 @@ int main(void)
   botonB1.cambio = botonIzq.cambio = botonDer.cambio = HAL_GetTick();
 
   /* Control por UART y pantalla de portada */
-  USART1_Manual_Init();
+  GR_Iniciar();
   Control_Iniciar();
   UI_Entrar(UI_PORTADA);
 
@@ -707,6 +703,50 @@ void SystemClock_Config(void)
   * @param None
   * @retval None
   */
+// Configuracion reflejada en ILI9341SPI.ioc.
+static void MX_SPI2_Init(void)
+{
+  /* USER CODE BEGIN SPI2_Init 0 */
+  /* USER CODE END SPI2_Init 0 */
+  /* USER CODE BEGIN SPI2_Init 1 */
+  /* USER CODE END SPI2_Init 1 */
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_MASTER;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_SOFT;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 10;
+  // FatFs comprueba la inicializacion; un fallo SD no detiene el juego.
+  HAL_SPI_Init(&hspi2);
+  /* USER CODE BEGIN SPI2_Init 2 */
+  /* USER CODE END SPI2_Init 2 */
+}
+
+static void MX_USART1_UART_Init(void)
+{
+  /* USER CODE BEGIN USART1_Init 0 */
+  /* USER CODE END USART1_Init 0 */
+  /* USER CODE BEGIN USART1_Init 1 */
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK) Error_Handler();
+  /* USER CODE BEGIN USART1_Init 2 */
+  /* USER CODE END USART1_Init 2 */
+}
+
 static void MX_SPI1_Init(void)
 {
 
@@ -895,7 +935,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LCD_CS_Pin|SD_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LCD_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;

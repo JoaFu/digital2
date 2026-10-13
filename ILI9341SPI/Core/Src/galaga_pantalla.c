@@ -1,4 +1,5 @@
 #include "galaga_pantalla.h"
+#include "galaga_records.h"
 #include "main.h"
 #include "galaga_dma.h"
 #include "ili9341.h"
@@ -132,12 +133,31 @@ void GP_Menu(uint8_t seleccionado) {
         texto(i+1U==seleccionado ? ">" : " ",32,y,1,0xFFE0);
         texto(opciones[i],56,y,1,i+1U==seleccionado?0xFFE0:0xBDF7);
     }
+    char marca[36];
+    uint32_t mejor=GR_Mejor(seleccionado);
+    if(!GR_Disponible()) snprintf(marca,sizeof(marca),"SD NO DISPONIBLE - SIN RECORDS");
+    else if(!mejor) snprintf(marca,sizeof(marca),"MEJOR: --");
+    else snprintf(marca,sizeof(marca),"MEJOR: %lu.%03lu s",(unsigned long)(mejor/1000),(unsigned long)(mejor%1000));
+    texto(marca,32,180,1,0x07FF);
     texto("IZQ/DER: CAMBIAR  B1: JUGAR",48,208,1,0xFFFF);
 }
 void GP_Resultado(uint8_t victoria) {
     GP_Esperar(); franja=buffers[0];
     limpiar(); texto(victoria?"YOU WIN":"GAME OVER",victoria?104:88,92,2,victoria?0x07E0:0xF800);
     texto("VOLVIENDO A ELEGIR NIVEL",64,144,1,0xFFFF);
+}
+void GP_RecordResultado(uint8_t victoria, uint32_t tiempo, uint8_t nuevo) {
+    GP_Esperar(); franja=buffers[0];
+    if(!GR_Disponible()) {
+        texto("SD NO DISPONIBLE - SIN RECORDS",32,180,1,0xBDF7);
+        return;
+    }
+    if(victoria) {
+        char mensaje[36];
+        snprintf(mensaje,sizeof(mensaje),"TIEMPO: %lu.%03lu s",(unsigned long)(tiempo/1000),(unsigned long)(tiempo%1000));
+        texto(mensaje,32,172,1,0xFFFF);
+        if(nuevo) texto("NUEVO RECORD GUARDADO",32,196,1,0x07E0);
+    }
 }
 void GP_PrepararJuego(void) {
     GP_Esperar(); franja=buffers[0];
