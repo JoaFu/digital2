@@ -29,14 +29,46 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum { UI_PORTADA, UI_MENU, UI_JUEGO, UI_RESULTADO } EstadoUI;
-typedef struct { uint8_t crudo, estable; uint32_t cambio; } BotonFiltrado;
+
+/* Estados de la interfaz de usuario (maquina de estados principal). */
+typedef enum
+{
+    UI_PORTADA,
+    UI_MENU,
+    UI_JUEGO,
+    UI_RESULTADO
+} EstadoUI;
+
+/* Estado de un boton fisico con antirrebote por tiempo. */
+typedef struct
+{
+    uint8_t  crudo;     /* Lectura instantanea del pin (1 = presionado)        */
+    uint8_t  estable;   /* Lectura ya filtrada por el antirrebote              */
+    uint32_t cambio;    /* Instante (ms) del ultimo cambio de la lectura cruda */
+} BotonFiltrado;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ANTIRREBOTE_MS 30U
-#define RESULTADO_MS 2500U
+
+/* --- Tiempos de la interfaz --- */
+#define ANTIRREBOTE_MS      30U     /* Tiempo minimo estable para aceptar un boton */
+#define RESULTADO_MS        2500U   /* Duracion de la pantalla de resultado        */
+
+/* --- Protocolo del control por UART: [INICIO][BOTONES][~BOTONES][FIN] --- */
+#define CONTROL_INICIO      0xA5U
+#define CONTROL_FIN         0x5AU
+#define CONTROL_TIMEOUT_MS  250U    /* Sin paquetes validos en este tiempo: se sueltan los botones */
+
+/* --- Mascara de bits del byte BOTONES --- */
+#define CONTROL_IZQ         (1U << 0)
+#define CONTROL_DER         (1U << 1)
+#define CONTROL_ACCION      (1U << 2)
+#define CONTROL_ATRAS       (1U << 3)
+#define CONTROL_ARRIBA      (1U << 4)
+#define CONTROL_ABAJO       (1U << 5)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,19 +83,42 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-static GJuego juego;
-static EstadoUI estadoUI;
-static BotonFiltrado botonB1, botonIzq, botonDer;
-static uint8_t nivelSeleccionado=1, b1Armado, b1Solicitado, disparoPendiente;
-static uint32_t tiempoUI, tiempoPaso;
+
+/* --- Juego e interfaz --- */
+static GJuego    juego;
+static EstadoUI  estadoUI;
+static uint8_t   nivelSeleccionado = 1;
+static uint32_t  tiempoUI;          /* Instante en que se entro al estado actual */
+static uint32_t  tiempoPaso;        /* Instante del siguiente paso de simulacion */
 volatile uint32_t galagaPasosDescartados;
-static uint32_t notaActual=0, inicioNota=0;
-static uint8_t melodiaEnCurso=0;
-static const NotaGalaga *melodiaActual=melodiaGalaga;
-static uint32_t cantidadNotasActual=CANTIDAD_NOTAS_GALAGA;
-static uint8_t repetirMelodia=1;
+
+/* --- Botones fisicos --- */
+static BotonFiltrado botonB1;
+static BotonFiltrado botonIzq;
+static BotonFiltrado botonDer;
+static uint8_t b1Armado;            /* B1 ya fue soltado, se permite una nueva pulsacion */
+static uint8_t b1Solicitado;        /* B1 fue presionado y espera a ser soltado          */
+static uint8_t disparoPendiente;    /* Disparo solicitado, se consume en el siguiente paso */
+
+/* --- Audio --- */
+static uint32_t          notaActual = 0;
+static uint32_t          inicioNota = 0;
+static uint8_t           melodiaEnCurso = 0;
+static const NotaGalaga *melodiaActual = melodiaGalaga;
+static uint32_t          cantidadNotasActual = CANTIDAD_NOTAS_GALAGA;
+static uint8_t           repetirMelodia = 1;
+
+/* --- Control por UART (se escriben desde la interrupcion) --- */
+static volatile uint8_t  uartRxByte;
+static volatile uint8_t  controlRxEstado;
+static volatile uint8_t  controlRxBotones;
+static volatile uint8_t  controlBotones;
+static volatile uint32_t controlUltimoPaquete;
+static uint8_t           controlAnterior;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,16 +129,36 @@ static void MX_SPI1_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
+
+/* Audio */
 void Audio_Iniciar(void);
 void Audio_Detener(void);
 void Audio_Actualizar(void);
 static void Audio_TocarNota(uint16_t frecuencia);
-static void Audio_Reproducir(const NotaGalaga *notas,uint32_t cantidad,uint8_t repetir);
+static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t repetir);
+
+/* Control por UART */
+static void Control_Iniciar(void);
+static void Control_ProcesarByte(uint8_t dato);
+static void USART1_Manual_Init(void);
+/* Botones e interfaz */
+static uint8_t Boton_Actualizar(BotonFiltrado *b, GPIO_TypeDef *puerto, uint16_t pin, uint32_t ahora);
+static void UI_Entrar(EstadoUI nuevo);
 static void UI_Actualizar(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* ==========================================================================
+ *  AUDIO
+ * ========================================================================== */
+
+/**
+  * @brief  Reproduce una nota por PWM en TIM3 (canal 1). Frecuencia 0 = silencio.
+  * @param  frecuencia: Frecuencia de la nota en Hz.
+  */
 static void Audio_TocarNota(uint16_t frecuencia)
 {
     // TIM3 recibe 84 MHz: PSC=83 produce un contador de 1 MHz.
@@ -94,7 +169,7 @@ static void Audio_TocarNota(uint16_t frecuencia)
     if (frecuencia != 0U)
     {
         periodo = (1000000U + frecuencia / 2U) / frecuencia;
-        pulso = periodo / 2U;
+        pulso = periodo / 2U;   /* Ciclo de trabajo del 50 % */
     }
 
     // Carga ARR y CCR1 juntos para evitar un ciclo con valores mezclados.
@@ -111,15 +186,25 @@ static void Audio_TocarNota(uint16_t frecuencia)
     }
 }
 
+/**
+  * @brief  Inicia la melodia principal de Galaga en modo repetitivo.
+  */
 void Audio_Iniciar(void)
 {
     Audio_Reproducir(melodiaGalaga, CANTIDAD_NOTAS_GALAGA, 1U);
 }
 
+/**
+  * @brief  Comienza a reproducir una melodia.
+  * @param  notas: Arreglo de notas (frecuencia y duracion).
+  * @param  cantidad: Numero de notas del arreglo.
+  * @param  repetir: 1 = repetir en bucle, 0 = reproducir una sola vez.
+  */
 static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t repetir)
 {
     if (melodiaEnCurso) Audio_Detener();
     if (notas == NULL || cantidad == 0U) return;
+
     melodiaActual = notas;
     cantidadNotasActual = cantidad;
     repetirMelodia = repetir;
@@ -139,6 +224,10 @@ static void Audio_Reproducir(const NotaGalaga *notas, uint32_t cantidad, uint8_t
     melodiaEnCurso = 1U;
 }
 
+/**
+  * @brief  Avanza la melodia segun el tiempo (no bloqueante). Se llama en cada
+  *         vuelta del bucle principal.
+  */
 void Audio_Actualizar(void)
 {
     if (!melodiaEnCurso)
@@ -167,6 +256,9 @@ void Audio_Actualizar(void)
     }
 }
 
+/**
+  * @brief  Detiene la melodia y apaga la salida PWM.
+  */
 void Audio_Detener(void)
 {
     melodiaEnCurso = 0U;
@@ -181,73 +273,321 @@ void Audio_Detener(void)
     notaActual = 0U;
 }
 
+/* ==========================================================================
+ *  CONTROL POR UART (paquete: INICIO, BOTONES, ~BOTONES, FIN)
+ * ========================================================================== */
 
-
-/* Filtra pulsaciones de los tres botones sin detener el bucle. */
-static uint8_t Boton_Actualizar(BotonFiltrado *b,GPIO_TypeDef *puerto,uint16_t pin,uint32_t ahora)
+/**
+  * @brief  Reinicia el estado del control y habilita la recepcion por interrupcion.
+  */
+static void Control_Iniciar(void)
 {
-    uint8_t lectura=HAL_GPIO_ReadPin(puerto,pin)==GPIO_PIN_RESET;
-    if(lectura!=b->crudo) { b->crudo=lectura; b->cambio=ahora; }
-    if(b->estable!=b->crudo && (uint32_t)(ahora-b->cambio)>=ANTIRREBOTE_MS) {
-        b->estable=b->crudo; return b->estable;
+    controlRxEstado = 0U;
+    controlRxBotones = 0U;
+    controlBotones = 0U;
+    controlAnterior = 0U;
+    controlUltimoPaquete = HAL_GetTick();
+
+    HAL_NVIC_SetPriority(USART1_IRQn, 1U, 0U);
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
+
+    if (HAL_UART_Receive_IT(&huart1,
+                            (uint8_t *)&uartRxByte, 1U) != HAL_OK)
+    {
+        Error_Handler();
     }
+}
+
+/**
+  * @brief  Maquina de estados que valida cada byte recibido del control.
+  *         0: espera INICIO | 1: recibe BOTONES | 2: valida ~BOTONES | 3: espera FIN
+  * @param  dato: Byte recibido por la UART.
+  */
+static void Control_ProcesarByte(uint8_t dato)
+{
+    switch (controlRxEstado)
+    {
+        case 0:
+            if (dato == CONTROL_INICIO)
+            {
+                controlRxEstado = 1U;
+            }
+            break;
+
+        case 1:
+            controlRxBotones = dato;
+            controlRxEstado = 2U;
+            break;
+
+        case 2:
+            if (dato == (uint8_t)(~controlRxBotones))
+            {
+                controlRxEstado = 3U;
+            }
+            else
+            {
+                controlRxEstado = (dato == CONTROL_INICIO) ? 1U : 0U;
+            }
+            break;
+
+        case 3:
+            if (dato == CONTROL_FIN)
+            {
+                controlBotones = controlRxBotones;
+                controlUltimoPaquete = HAL_GetTick();
+            }
+
+            controlRxEstado = 0U;
+            break;
+
+        default:
+            controlRxEstado = 0U;
+            break;
+    }
+}
+
+static void USART1_Manual_Init(void)
+{
+    __HAL_RCC_USART1_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // PA10 como USART1_RX, funcion alternativa AF7
+    GPIO_InitStruct.Pin = GPIO_PIN_10;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    huart1.Instance = USART1;
+    huart1.Init.BaudRate = 115200;
+    huart1.Init.WordLength = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits = UART_STOPBITS_1;
+    huart1.Init.Parity = UART_PARITY_NONE;
+    huart1.Init.Mode = UART_MODE_RX;
+    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+
+    if (HAL_UART_Init(&huart1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+}
+
+/* ==========================================================================
+ *  BOTONES
+ * ========================================================================== */
+
+/**
+  * @brief  Filtra pulsaciones de los tres botones sin detener el bucle.
+  * @param  b: Estado del boton a actualizar.
+  * @param  puerto: Puerto GPIO del boton.
+  * @param  pin: Pin del boton.
+  * @param  ahora: Tiempo actual en ms.
+  * @retval Valor estable del boton cuando este cambia; 0 si no hubo cambio.
+  */
+static uint8_t Boton_Actualizar(BotonFiltrado *b, GPIO_TypeDef *puerto, uint16_t pin, uint32_t ahora)
+{
+    uint8_t lectura = HAL_GPIO_ReadPin(puerto, pin) == GPIO_PIN_RESET;
+
+    if (lectura != b->crudo)
+    {
+        b->crudo = lectura;
+        b->cambio = ahora;
+    }
+
+    if (b->estable != b->crudo && (uint32_t)(ahora - b->cambio) >= ANTIRREBOTE_MS)
+    {
+        b->estable = b->crudo;
+        return b->estable;
+    }
+
     return 0;
 }
+
+/* ==========================================================================
+ *  INTERFAZ DE USUARIO
+ * ========================================================================== */
+
+/**
+  * @brief  Cambia de estado de la interfaz y ejecuta las acciones de entrada.
+  * @param  nuevo: Estado al que se desea entrar.
+  */
 static void UI_Entrar(EstadoUI nuevo)
 {
-    estadoUI=nuevo; b1Armado=0; b1Solicitado=0; disparoPendiente=0;
-    if(nuevo==UI_PORTADA) { GP_Portada(); Audio_Iniciar(); }
-    else if(nuevo==UI_MENU) { GP_Menu(nivelSeleccionado); if(!melodiaEnCurso) Audio_Iniciar(); }
-    else if(nuevo==UI_JUEGO) {
-        if(melodiaEnCurso) Audio_Detener();
-        G_Iniciar(&juego,nivelSeleccionado); GP_PrepararJuego(); GP_Dibujar(&juego); GP_Esperar();
-        tiempoPaso=HAL_GetTick();
-    } else {
-        if(melodiaEnCurso) Audio_Detener();
-        GP_Resultado(juego.resultado==G_VICTORIA);
-        if(juego.resultado==G_VICTORIA) Audio_Reproducir(melodiaVictoria,CANTIDAD_NOTAS_VICTORIA,0);
-        else Audio_Reproducir(melodiaGameOver,CANTIDAD_NOTAS_GAMEOVER,0);
+    estadoUI = nuevo;
+    b1Armado = 0;
+    b1Solicitado = 0;
+    disparoPendiente = 0;
+
+    if (nuevo == UI_PORTADA)
+    {
+        GP_Portada();
+        Audio_Iniciar();
     }
-    tiempoUI=HAL_GetTick();
+    else if (nuevo == UI_MENU)
+    {
+        GP_Menu(nivelSeleccionado);
+        if (!melodiaEnCurso) Audio_Iniciar();
+    }
+    else if (nuevo == UI_JUEGO)
+    {
+        if (melodiaEnCurso) Audio_Detener();
+
+        G_Iniciar(&juego, nivelSeleccionado);
+        GP_PrepararJuego();
+        GP_Dibujar(&juego);
+        GP_Esperar();
+
+        tiempoPaso = HAL_GetTick();
+    }
+    else    /* UI_RESULTADO */
+    {
+        if (melodiaEnCurso) Audio_Detener();
+
+        GP_Resultado(juego.resultado == G_VICTORIA);
+
+        if (juego.resultado == G_VICTORIA)
+            Audio_Reproducir(melodiaVictoria, CANTIDAD_NOTAS_VICTORIA, 0);
+        else
+            Audio_Reproducir(melodiaGameOver, CANTIDAD_NOTAS_GAMEOVER, 0);
+    }
+
+    tiempoUI = HAL_GetTick();
 }
+
+/**
+  * @brief  Actualiza la interfaz segun el estado actual. Se llama en cada vuelta
+  *         del bucle principal (no bloqueante).
+  */
 static void UI_Actualizar(void)
 {
     GP_Servicio();
-    uint32_t ahora=HAL_GetTick();
-    uint8_t b1=Boton_Actualizar(&botonB1,B1_GPIO_Port,B1_Pin,ahora);
-    uint8_t izq=Boton_Actualizar(&botonIzq,BTN_UP_GPIO_Port,BTN_UP_Pin,ahora);
-    uint8_t der=Boton_Actualizar(&botonDer,BTN_DOWN_GPIO_Port,BTN_DOWN_Pin,ahora);
+
+    uint32_t ahora = HAL_GetTick();
+
+    /* Si el control deja de enviar paquetes, se sueltan todos sus botones. */
+    if ((uint32_t)(ahora - controlUltimoPaquete) > CONTROL_TIMEOUT_MS)
+    {
+        controlBotones = 0U;
+    }
+
+    /* Estado actual del control y deteccion de flancos de pulsacion nueva. */
+    uint8_t controlActual = controlBotones;
+    uint8_t controlIzq = (controlActual & CONTROL_IZQ) != 0U;
+    uint8_t controlDer = (controlActual & CONTROL_DER) != 0U;
+    uint8_t controlAccion = (controlActual & CONTROL_ACCION) != 0U;
+
+    uint8_t controlIzqNuevo = controlIzq && !(controlAnterior & CONTROL_IZQ);
+    uint8_t controlDerNuevo = controlDer && !(controlAnterior & CONTROL_DER);
+    uint8_t controlAccionNuevo = controlAccion && !(controlAnterior & CONTROL_ACCION);
+
+    controlAnterior = controlActual;
+
+    /* Botones fisicos con antirrebote. */
+    uint8_t b1 = Boton_Actualizar(&botonB1, B1_GPIO_Port, B1_Pin, ahora);
+    uint8_t izq = Boton_Actualizar(&botonIzq, BTN_UP_GPIO_Port, BTN_UP_Pin, ahora);
+    uint8_t der = Boton_Actualizar(&botonDer, BTN_DOWN_GPIO_Port, BTN_DOWN_Pin, ahora);
+
     Audio_Actualizar();
-    if(estadoUI==UI_PORTADA || estadoUI==UI_MENU) {
-        if(estadoUI==UI_MENU && izq!=der) {
-            if(izq) nivelSeleccionado=nivelSeleccionado==1?3:nivelSeleccionado-1;
-            else nivelSeleccionado=nivelSeleccionado==3?1:nivelSeleccionado+1;
+
+    /* ---------------- Portada y menu ---------------- */
+    if (estadoUI == UI_PORTADA || estadoUI == UI_MENU)
+    {
+        uint8_t menuIzq = izq || controlIzqNuevo;
+        uint8_t menuDer = der || controlDerNuevo;
+
+        /* Cambio de nivel (solo en el menu). */
+        if (estadoUI == UI_MENU && menuIzq != menuDer)
+        {
+            if (menuIzq)
+                nivelSeleccionado = (nivelSeleccionado == 1) ? 3 : nivelSeleccionado - 1;
+            else
+                nivelSeleccionado = (nivelSeleccionado == 3) ? 1 : nivelSeleccionado + 1;
+
             GP_Menu(nivelSeleccionado);
         }
-        /* Confirmar al soltar; la misma pulsacion nunca atraviesa dos menus. */
-        if(!botonB1.estable && !botonB1.crudo && (uint32_t)(ahora-botonB1.cambio)>=ANTIRREBOTE_MS) {
-            b1Armado=1;
-            if(b1Solicitado) UI_Entrar(estadoUI==UI_PORTADA?UI_MENU:UI_JUEGO);
-        } else if(b1 && b1Armado) b1Solicitado=1;
-    } else if(estadoUI==UI_JUEGO) {
-        if(b1) disparoPendiente=1;
-        uint32_t pendientes=(uint32_t)(ahora-tiempoPaso)/G_PASO_MS;
-        if(!pendientes) return;
-        /* Recuperar hasta tres pasos; descartar atrasos extremos evita una
-           espiral de actualizaciones si el bus o el debugger se detienen. */
-        if(pendientes>3U) {
-            galagaPasosDescartados+=pendientes-3U;
-            tiempoPaso+=(pendientes-3U)*G_PASO_MS; pendientes=3U;
+
+        // El control de PlayStation confirma con una nueva pulsacion de X.
+        if (controlAccionNuevo)
+        {
+            if (estadoUI == UI_PORTADA)
+                UI_Entrar(UI_MENU);
+            else
+                UI_Entrar(UI_JUEGO);
+
+            return;
         }
+
+        // Confirmar al soltar; la misma pulsacion fisica nunca atraviesa dos menus.
+        if (!botonB1.estable && !botonB1.crudo &&
+            (uint32_t)(ahora - botonB1.cambio) >= ANTIRREBOTE_MS)
+        {
+            b1Armado = 1;
+            if (b1Solicitado)
+            {
+                UI_Entrar(estadoUI == UI_PORTADA ? UI_MENU : UI_JUEGO);
+                return;
+            }
+        }
+        else if (b1 && b1Armado)
+        {
+            b1Solicitado = 1;
+        }
+    }
+    /* ---------------- Juego ---------------- */
+    else if (estadoUI == UI_JUEGO)
+    {
+        if (b1 || controlAccionNuevo)
+            disparoPendiente = 1U;
+
+        uint32_t pendientes = (uint32_t)(ahora - tiempoPaso) / G_PASO_MS;
+        if (!pendientes)
+            return;
+
+        // Recuperar hasta tres pasos; descartar atrasos extremos evita una
+        // espiral de actualizaciones si el bus o el debugger se detienen.
+        if (pendientes > 3U)
+        {
+            galagaPasosDescartados += pendientes - 3U;
+            tiempoPaso += (pendientes - 3U) * G_PASO_MS;
+            pendientes = 3U;
+        }
+
         GP_Marcar(&juego);
-        for(uint32_t i=0;i<pendientes;++i) {
-            GEntrada entrada={botonIzq.estable,botonDer.estable,disparoPendiente};
-            disparoPendiente=0; G_Paso(&juego,entrada); tiempoPaso+=G_PASO_MS;
-            if(juego.resultado!=G_JUGANDO) { UI_Entrar(UI_RESULTADO); return; }
+
+        for (uint32_t i = 0; i < pendientes; ++i)
+        {
+            GEntrada entrada =
+            {
+                botonIzq.estable || controlIzq,
+                botonDer.estable || controlDer,
+                disparoPendiente
+            };
+
+            disparoPendiente = 0U;
+            G_Paso(&juego, entrada);
+            tiempoPaso += G_PASO_MS;
+
+            if (juego.resultado != G_JUGANDO)
+            {
+                UI_Entrar(UI_RESULTADO);
+                return;
+            }
         }
+
         GP_Dibujar(&juego);
-    } else if(!melodiaEnCurso && (uint32_t)(ahora-tiempoUI)>=RESULTADO_MS) UI_Entrar(UI_MENU);
+    }
+    /* ---------------- Resultado ---------------- */
+    else if (!melodiaEnCurso && (uint32_t)(ahora - tiempoUI) >= RESULTADO_MS)
+    {
+        UI_Entrar(UI_MENU);
+    }
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -283,28 +623,35 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM3_Init();
   MX_TIM7_Init();
-
-
   /* USER CODE BEGIN 2 */
-LCD_Init();
+
+  /* Pantalla */
+  LCD_Init();
   GP_Iniciar();
-  botonB1.crudo=botonB1.estable=(HAL_GPIO_ReadPin(B1_GPIO_Port,B1_Pin)==GPIO_PIN_RESET);
-  botonIzq.crudo=botonIzq.estable=(HAL_GPIO_ReadPin(BTN_UP_GPIO_Port,BTN_UP_Pin)==GPIO_PIN_RESET);
-  botonDer.crudo=botonDer.estable=(HAL_GPIO_ReadPin(BTN_DOWN_GPIO_Port,BTN_DOWN_Pin)==GPIO_PIN_RESET);
-  botonB1.cambio=botonIzq.cambio=botonDer.cambio=HAL_GetTick();
+
+
+  /* Estado inicial de los botones: se lee el pin para evitar una pulsacion falsa al arrancar. */
+  botonB1.crudo = botonB1.estable = (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_RESET);
+  botonIzq.crudo = botonIzq.estable = (HAL_GPIO_ReadPin(BTN_UP_GPIO_Port, BTN_UP_Pin) == GPIO_PIN_RESET);
+  botonDer.crudo = botonDer.estable = (HAL_GPIO_ReadPin(BTN_DOWN_GPIO_Port, BTN_DOWN_Pin) == GPIO_PIN_RESET);
+  botonB1.cambio = botonIzq.cambio = botonDer.cambio = HAL_GetTick();
+
+  /* Control por UART y pantalla de portada */
+  USART1_Manual_Init();
+  Control_Iniciar();
   UI_Entrar(UI_PORTADA);
-/* USER CODE END 2 */
+
+  /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-while (1)
+  while (1)
   {
-      UI_Actualizar();
-/* USER CODE END WHILE */
+    UI_Actualizar();
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
-
   /* USER CODE END 3 */
 }
 
@@ -590,7 +937,35 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+/**
+  * @brief  Callback de recepcion completa de la UART: procesa el byte recibido
+  *         y vuelve a habilitar la recepcion del siguiente.
+  * @param  huart: Manejador de la UART que genero la interrupcion.
+  */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        Control_ProcesarByte(uartRxByte);
+
+        HAL_UART_Receive_IT(&huart1,
+                            (uint8_t *)&uartRxByte, 1U);
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        controlRxEstado = 0U;
+        controlBotones = 0U;
+
+        HAL_UART_Receive_IT(&huart1,
+                            (uint8_t *)&uartRxByte, 1U);
+    }
+}
 /* USER CODE END 4 */
+
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
@@ -598,17 +973,14 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-
-  // User can add his own implementation to report the HAL error return state
-
+  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
-
   while (1)
   {
   }
-
   /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
@@ -620,10 +992,8 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-
-  // User can add his own implementation to report the file name and line number,
-// ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line)
-
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
